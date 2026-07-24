@@ -1,100 +1,102 @@
-// ربط العناصر الأساسية من الواجهة
-document.getElementById('sendBtn').addEventListener('click', sendMessage);
-document.getElementById('userInput').addEventListener('keypress', function (e) {
-    if (e.key === 'Enter') sendMessage();
-});
+let currentMode = 'general';
 
-// 1. تفعيل زر "محادثة جديدة" (تنظيف الشاشة وبدء شات جديد)
-document.querySelector('.new-chat-btn').addEventListener('click', function () {
-    const chatBox = document.getElementById('chatBox');
-    chatBox.innerHTML = `
-        <div class="message-wrapper bot">
-            <div class="avatar bot-av">AI</div>
-            <div class="message-box">
-                🔄 تم بدء جلسة محادثة جديدة بنجاح! فصوص Nexara جاهزة ومستعدة لأسئلتك الآن.
-            </div>
-        </div>
-    `;
-});
+document.addEventListener('DOMContentLoaded', function () {
 
-// 2. تفعيل أزرار الأدوات السفلية (ويب، كود، صوت) عند الضغط عليها
-document.querySelectorAll('.tool-tag').forEach(tag => {
-    tag.addEventListener('click', function () {
-        const toolName = this.innerText.trim();
-        const inputField = document.getElementById('userInput');
+    document.getElementById('webTool').addEventListener('click', function () { toggleMode('web', this); });
+    document.getElementById('codeTool').addEventListener('click', function () { toggleMode('code', this); });
+    document.getElementById('voiceTool').addEventListener('click', function () { alert("🎙️ فص الصوت: جاري الاتصال بالمايكروفون..."); });
 
-        // تأثير بصري لطيف عند الضغط
-        this.style.transform = 'scale(0.95)';
-        setTimeout(() => this.style.transform = 'scale(1)', 1000);
-
-        // إضافة نص الأداة داخل صندوق الكتابة لتسهيل الأمر على المستخدم
-        if (toolName.includes("ويب")) {
-            inputField.value = "[البحث في الويب]: " + inputField.value;
-        } else if (toolName.includes("كود")) {
-            inputField.value = "اكتب لي كود لـ " + inputField.value;
-        } else if (toolName.includes("صوت")) {
-            alert("🎙️ ميزة الإدخال الصوتي ستكون مدعومة في التحديث القادم عبر المايكروفون!");
+    function toggleMode(mode, element) {
+        if (currentMode === mode) {
+            currentMode = 'general';
+            element.classList.remove('active-mode');
+        } else {
+            document.querySelectorAll('.tool-tag').forEach(t => t.classList.remove('active-mode'));
+            currentMode = mode;
+            element.classList.add('active-mode');
         }
-        inputField.focus();
+    }
+
+    document.getElementById('userInput').addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') sendMessage();
     });
-});
 
-// 3. تفعيل أزرار القائمة الجانبية السفلى (مكتبة الأوامر والإعدادات)
-document.querySelectorAll('.footer-item').forEach(item => {
-    item.addEventListener('click', function () {
-        const name = this.innerText.trim();
-        alert(`⚙️ فتح نافذة: (${name}) لـ Nexara AI Studio قيد التطوير والتحضير!`);
+    document.getElementById('topSidebarToggle').addEventListener('click', toggleSidebar);
+    document.getElementById('sendBtn').addEventListener('click', function () {
+        const userInputField = document.getElementById('userInput');
+        if (userInputField.value.trim() !== '') {
+            sendMessage();
+        } else {
+            toggleSidebar();
+        }
     });
-});
 
-// 4. دالة إرسال الرسائل الأساسية والمعالجة عبر الفص الذكي للبايثون
-function sendMessage() {
-    const inputField = document.getElementById('userInput');
-    const query = inputField.value.trim();
+    document.getElementById('newChatBtn').addEventListener('click', function () {
+        document.getElementById('chatBox').innerHTML = `<div class="landing-greeting" id="landingGreeting"><h1>مرحبا، كيف يمكنني مساعدتك اليوم؟</h1></div>`;
+        currentMode = 'general';
+        document.querySelectorAll('.tool-tag').forEach(t => t.classList.remove('active-mode'));
+    });
 
-    if (query === '') return;
+    function toggleSidebar() {
+        const sidebar = document.querySelector('.sidebar');
+        const bottomIcon = document.querySelector('#sendBtn i');
+        sidebar.classList.toggle('collapsed');
+        bottomIcon.style.transform = sidebar.classList.contains('collapsed') ? 'rotate(180deg)' : 'rotate(0deg)';
+    }
 
-    const chatBox = document.getElementById('chatBox');
+    // ==========================================
+    // الحل النهائي (بسيط جداً ويعتمد على تأخير الخادم)
+    // ==========================================
+    async function sendMessage() {
+        const inputField = document.getElementById('userInput');
+        const query = inputField.value.trim();
+        if (query === '') return;
 
-    // إنشاء فقاعة المستخدم مع الـ Avatar
-    const userWrapper = document.createElement('div');
-    userWrapper.className = 'message-wrapper user';
-    userWrapper.innerHTML = `
-        <div class="avatar user-av">U</div>
-        <div class="message-box">${query}</div>
-    `;
-    chatBox.appendChild(userWrapper);
+        const chatBox = document.getElementById('chatBox');
+        const greeting = document.getElementById('landingGreeting');
+        if (greeting) { greeting.remove(); }
 
-    inputField.value = '';
-    chatBox.scrollTop = chatBox.scrollHeight;
+        // إضافة رسالة المستخدم
+        const userWrapper = document.createElement('div');
+        userWrapper.className = 'message-wrapper user';
+        userWrapper.innerHTML = `<div class="avatar user-av">U</div><div class="message-box">${query}</div>`;
+        chatBox.appendChild(userWrapper);
+        inputField.value = '';
+        chatBox.scrollTop = chatBox.scrollHeight;
 
-    // إرسال الطلب إلى سيرفر بايثون (Flask)
-    fetch('/predict', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input: query })
-    })
-        .then(response => response.json())
-        .then(data => {
-            // إنشاء فقاعة Nexara مع الـ Avatar والرد الذكي
+        // إظهار طبقة "يفكر..."
+        const overlay = document.getElementById('thinking-overlay');
+        overlay.style.display = 'flex';
+
+        // إجبار المتصفح على رسم الطبقة فوراً
+        overlay.offsetHeight;
+
+        // الآن أرسل الطلب. بما أن الخادم سيستغرق 1.2 ثانية، فإن "يفكر..." ستبقى!
+        try {
+            const response = await fetch('/predict', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ input: query, mode: currentMode })
+            });
+            const data = await response.json();
+
+            // إخفاء الطبقة وعرض الرد
+            overlay.style.display = 'none';
+
             const botWrapper = document.createElement('div');
             botWrapper.className = 'message-wrapper bot';
-            botWrapper.innerHTML = `
-            <div class="avatar bot-av">AI</div>
-            <div class="message-box">${data.response}</div>
-        `;
+            botWrapper.innerHTML = `<div class="avatar bot-av">AI</div><div class="message-box">${data.response}</div>`;
             chatBox.appendChild(botWrapper);
             chatBox.scrollTop = chatBox.scrollHeight;
-        })
-        .catch(error => {
+
+        } catch (error) {
             console.error('Error:', error);
-            const errorWrapper = document.createElement('div');
-            errorWrapper.className = 'message-wrapper bot';
-            errorWrapper.innerHTML = `
-            <div class="avatar bot-av">AI</div>
-            <div class="message-box">❌ عذراً، واجهت مشكلة في الاتصال بالسيرفر الداخلي لعقلي. تأكد من تشغيل ملف app.py!</div>
-        `;
-            chatBox.appendChild(errorWrapper);
+            overlay.style.display = 'none';
+            const errWrapper = document.createElement('div');
+            errWrapper.className = 'message-wrapper bot';
+            errWrapper.innerHTML = `<div class="avatar bot-av">AI</div><div class="message-box" style="background:#ffe6e6;">❌ حدث خطأ في الاتصال بالخادم.</div>`;
+            chatBox.appendChild(errWrapper);
             chatBox.scrollTop = chatBox.scrollHeight;
-        });
-}
+        }
+    }
+});
