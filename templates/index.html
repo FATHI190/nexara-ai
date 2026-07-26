@@ -3,12 +3,11 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nexara AI Studio</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nexara</title>
+    <link rel="icon" href="/static/logo-removebg-preview.png?v=4" type="image/png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-
     <style>
-        /* المتغيرات الأساسية */
         :root {
             --bg-main: #eef7f6;
             --bg-sidebar: #f8fcfb;
@@ -19,6 +18,7 @@
             --white: #ffffff;
             --bubble-user: #b9ece6;
             --sidebar-width: 280px;
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
         }
 
         body {
@@ -34,65 +34,62 @@
 
         .app-container {
             display: flex;
+            flex-direction: column;
             height: 100vh;
             width: 100vw;
             overflow: hidden;
+            position: relative;
         }
 
-        /* === القائمة الجانبية === */
+        /* ===== الشريط الجانبي - درج منبثق (Drawer) ===== */
         .sidebar {
-            width: var(--sidebar-width);
-            min-width: var(--sidebar-width);
+            position: fixed;
+            top: 0;
+            right: -100%;
+            width: 85%;
+            max-width: var(--sidebar-width);
+            height: 100vh;
             background-color: var(--bg-sidebar);
             border-left: 1px solid #dbeae7;
             display: flex;
             flex-direction: column;
             padding: 20px;
             box-sizing: border-box;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            opacity: 1;
-            visibility: visible;
+            transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 1000;
+            box-shadow: -5px 0 20px rgba(0, 0, 0, 0.1);
         }
 
-        .sidebar.collapsed {
-            width: 0 !important;
-            min-width: 0 !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            opacity: 0;
-            visibility: hidden;
-            border-left: none !important;
+        .sidebar.open {
+            right: 0;
         }
 
         .sidebar-header {
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 15px;
             margin-bottom: 25px;
         }
 
-        .brand-logo {
-            width: 40px;
-            height: 40px;
-            background-color: var(--primary-teal);
-            color: var(--white);
-            border-radius: 10px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-weight: bold;
-            font-size: 18px;
+        .brand-logo-img {
+            width: 50px;
+            height: 50px;
+            background: var(--white);
+            border-radius: 14px;
+            object-fit: contain;
+            padding: 4px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
         }
 
         .brand-info h3 {
             margin: 0;
-            font-size: 16px;
+            font-size: 18px;
             color: var(--text-dark);
         }
 
         .brand-info p {
             margin: 0;
-            font-size: 12px;
+            font-size: 11px;
             color: var(--text-gray);
         }
 
@@ -100,7 +97,7 @@
             background-color: var(--primary-teal);
             color: var(--white);
             border: none;
-            padding: 12px;
+            padding: 14px;
             border-radius: 25px;
             font-size: 15px;
             font-weight: bold;
@@ -138,6 +135,7 @@
         .recent-chats {
             flex: 1;
             overflow-y: auto;
+            margin-bottom: 10px;
         }
 
         .section-title {
@@ -148,22 +146,84 @@
             margin-bottom: 10px;
         }
 
+        #conversationsList {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
         .chat-item {
             display: flex;
             align-items: center;
-            gap: 12px;
-            padding: 12px;
-            border-radius: 15px;
+            justify-content: space-between;
+            padding: 12px 14px;
+            background-color: #cbf3ee;
+            border-radius: 16px;
             cursor: pointer;
+            transition: all 0.2s ease;
+            border: 2px solid transparent;
+        }
+
+        .chat-item:hover {
+            background-color: #b3ece5;
         }
 
         .chat-item.active {
-            background-color: #d1f2ee;
+            background-color: #b3ece5;
+            border-color: var(--primary-teal);
         }
 
-        .chat-item i {
+        .chat-item-text {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            overflow: hidden;
+            cursor: pointer;
+        }
+
+        .chat-item-text h4 {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-dark);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .chat-item-text p {
+            margin: 0;
+            font-size: 11px;
+            color: #4a7a75;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .chat-item-actions {
+            display: flex;
+            gap: 6px;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .chat-item:hover .chat-item-actions {
+            opacity: 1;
+        }
+
+        .action-btn {
+            color: var(--text-gray);
+            cursor: pointer;
+            font-size: 12px;
+            padding: 4px;
+            border-radius: 50%;
+            transition: all 0.2s ease;
+        }
+
+        .action-btn:hover {
             color: var(--primary-teal);
-            font-size: 18px;
+            background-color: rgba(0, 0, 0, 0.05);
         }
 
         .sidebar-footer {
@@ -178,39 +238,66 @@
             padding: 10px;
             font-size: 14px;
             cursor: pointer;
+            transition: color 0.2s;
         }
 
-        /* === منطقة المحتوى الرئيسي === */
+        .footer-item:hover {
+            color: var(--primary-teal);
+        }
+
+        /* طبقة خلفية داكنة عند فتح القائمة الجانبية */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.4);
+            z-index: 999;
+        }
+
+        .sidebar-overlay.active {
+            display: block;
+        }
+
+        /* ===== منطقة المحتوى الرئيسية ===== */
         .main-content {
             flex: 1;
             display: flex;
             flex-direction: column;
             background: linear-gradient(135deg, #eef7f6 0%, #dcf3f0 100%);
             position: relative;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            height: 100vh;
+            overflow: hidden;
         }
 
         .main-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 20px 40px;
+            padding: 15px 20px;
+            background: rgba(238, 247, 246, 0.8);
+            backdrop-filter: blur(10px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }
 
         .header-title h2 {
             margin: 0;
-            font-size: 22px;
+            font-size: 18px;
         }
 
         .header-title p {
-            margin: 3px 0 0 0;
-            font-size: 12px;
+            margin: 2px 0 0 0;
+            font-size: 10px;
             color: var(--text-gray);
         }
 
         .top-toggle-btn {
-            background: #f0f6f5;
-            border: 1px solid #dbeae7;
+            background: none;
+            border: none;
             color: var(--text-dark);
             cursor: pointer;
             padding: 8px;
@@ -221,6 +308,9 @@
             transition: all 0.2s;
             width: 40px;
             height: 40px;
+            font-size: 20px;
+            background: var(--white);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
         }
 
         .top-toggle-btn:hover {
@@ -228,28 +318,14 @@
             color: var(--primary-teal);
         }
 
-        .top-toggle-btn svg {
-            width: 20px;
-            height: 20px;
-        }
-
-        .toggle-arrow {
-            transition: transform 0.3s ease;
-            transform-origin: center;
-        }
-
-        .sidebar.collapsed~.main-content .toggle-arrow {
-            transform: rotate(180deg);
-        }
-
         .chat-area {
             flex: 1;
             overflow-y: auto;
-            padding: 20px 40px;
+            padding: 15px 20px 120px 20px;
+            /* مساحة إضافية للـ Input في الأسفل */
             display: flex;
             flex-direction: column;
-            gap: 20px;
-            position: relative;
+            gap: 15px;
         }
 
         .landing-greeting {
@@ -260,22 +336,24 @@
             text-align: center;
             margin: auto;
             animation: fadeIn 0.6s ease-out;
+            padding-bottom: 100px;
         }
 
         .landing-greeting h1 {
-            font-size: 38px;
+            font-size: 26px;
             font-weight: 600;
             background: linear-gradient(to left, #1b3b36, #0ed2be);
             background-clip: text;
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             margin-bottom: 10px;
+            padding: 0 15px;
         }
 
         .message-wrapper {
             display: flex;
-            gap: 15px;
-            max-width: 75%;
+            gap: 12px;
+            max-width: 85%;
             animation: fadeIn 0.3s ease-in-out;
         }
 
@@ -288,9 +366,26 @@
             flex-direction: row-reverse;
         }
 
-        .avatar {
-            width: 35px;
-            height: 35px;
+        .avatar-img {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: var(--white);
+            object-fit: cover;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .bot-av {
+            border: 2px solid var(--primary-teal);
+        }
+
+        .user-av {
+            background-color: #1b3b36;
+        }
+
+        .avatar-text {
+            width: 30px;
+            height: 30px;
             border-radius: 50%;
             display: flex;
             justify-content: center;
@@ -300,20 +395,12 @@
             color: var(--white);
         }
 
-        .bot-av {
-            background-color: var(--primary-teal);
-        }
-
-        .user-av {
-            background-color: #1b3b36;
-        }
-
         .message-box {
-            padding: 15px 20px;
-            border-radius: 20px;
-            font-size: 15px;
-            line-height: 1.6;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+            padding: 12px 16px;
+            border-radius: 18px;
+            font-size: 14px;
+            line-height: 1.5;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
             white-space: pre-line;
         }
 
@@ -329,27 +416,46 @@
             border-top-left-radius: 0;
         }
 
-        /* === منطقة الإدخال السفلية === */
+        /* ===== مربع الإدخال العائم (ثابت في الأسفل) ===== */
         .main-footer {
-            padding: 20px 40px 40px 40px;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background: transparent;
+            padding: 10px 15px calc(15px + var(--safe-bottom));
+            box-sizing: border-box;
+            z-index: 50;
+            pointer-events: none;
+            /* يمرر الأحداث للـ container */
         }
 
         .input-container {
             background-color: var(--white);
             border-radius: 24px;
-            padding: 15px 20px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+            padding: 12px 16px;
+            box-shadow: 0 5px 25px rgba(0, 0, 0, 0.08);
             display: flex;
             flex-direction: column;
+            gap: 10px;
+            pointer-events: auto;
+            /* يعيد الأحداث */
+        }
+
+        .input-row {
+            display: flex;
+            align-items: center;
             gap: 10px;
         }
 
         .input-container input {
             border: none;
             outline: none;
-            font-size: 16px;
+            font-size: 15px;
             color: var(--text-dark);
-            width: 100%;
+            flex: 1;
+            background: transparent;
+            padding: 5px 0;
         }
 
         .input-toolbar {
@@ -360,18 +466,18 @@
 
         .tools {
             display: flex;
-            gap: 8px;
+            gap: 6px;
         }
 
         .tool-tag {
             background-color: #f0f6f5;
-            padding: 6px 14px;
+            padding: 4px 12px;
             border-radius: 15px;
-            font-size: 12px;
+            font-size: 10px;
             color: var(--text-dark);
             display: flex;
             align-items: center;
-            gap: 5px;
+            gap: 4px;
             cursor: pointer;
             user-select: none;
             transition: all 0.2s;
@@ -383,27 +489,57 @@
             font-weight: bold;
         }
 
+        .tool-tag.listening-mode {
+            background-color: #e74c3c !important;
+            color: white !important;
+            animation: pulse-red 1s infinite;
+        }
+
+        @keyframes pulse-red {
+            0% {
+                box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.4);
+            }
+
+            70% {
+                box-shadow: 0 0 0 6px rgba(231, 76, 60, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(231, 76, 60, 0);
+            }
+        }
+
+        .right-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
         .version-text {
-            font-size: 12px;
+            font-size: 10px;
             color: var(--text-gray);
             font-weight: bold;
-            margin-left: 10px;
-            margin-right: 10px;
         }
 
         .send-btn {
             background-color: var(--primary-teal);
             color: var(--white);
             border: none;
-            width: 40px;
-            height: 40px;
+            width: 36px;
+            height: 36px;
             border-radius: 50%;
             cursor: pointer;
             display: flex;
             justify-content: center;
             align-items: center;
-            font-size: 16px;
+            font-size: 14px;
             transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
         }
 
         @keyframes fadeIn {
@@ -418,83 +554,242 @@
             }
         }
 
-        @media (max-width: 768px) {
+        /* 🌟 إصلاح المودال */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(5px);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.show {
+            display: flex !important;
+        }
+
+        .modal-box {
+            background: var(--white);
+            border-radius: 24px;
+            padding: 25px;
+            width: 90%;
+            max-width: 350px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+            animation: fadeIn 0.3s ease-out;
+            text-align: center;
+            position: relative;
+        }
+
+        .modal-title {
+            font-size: 17px;
+            font-weight: bold;
+            color: var(--text-dark);
+            margin-bottom: 20px;
+        }
+
+        .modal-input {
+            width: 100%;
+            padding: 10px 15px;
+            border: 2px solid #dbeae7;
+            border-radius: 16px;
+            font-size: 15px;
+            box-sizing: border-box;
+            outline: none;
+            transition: 0.2s;
+            text-align: right;
+        }
+
+        .modal-input:focus {
+            border-color: var(--primary-teal);
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        .modal-btn {
+            border: none;
+            padding: 10px 25px;
+            border-radius: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 14px;
+            transition: 0.2s;
+        }
+
+        .modal-btn.confirm {
+            background-color: var(--primary-teal);
+            color: var(--white);
+        }
+
+        .modal-btn.confirm:hover {
+            background-color: var(--primary-hover);
+        }
+
+        .modal-btn.cancel {
+            background-color: #f0f6f5;
+            color: var(--text-dark);
+        }
+
+        .modal-btn.cancel:hover {
+            background-color: #dbeae7;
+        }
+
+        .modal-btn.danger {
+            background-color: #e74c3c;
+            color: var(--white);
+        }
+
+        .modal-btn.danger:hover {
+            background-color: #c0392b;
+        }
+
+        /* التجاوب مع الشاشات الأكبر حجماً */
+        @media (min-width: 769px) {
             .app-container {
-                flex-direction: column;
+                flex-direction: row;
             }
 
             .sidebar {
-                width: 100%;
-                height: auto;
-                padding: 10px;
+                position: relative;
+                right: 0 !important;
+                width: var(--sidebar-width);
+                min-width: var(--sidebar-width);
+                height: 100vh;
+                padding: 20px;
+                box-shadow: none;
+                border-left: 1px solid #dbeae7;
+                z-index: auto;
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             }
 
-            .main-content {
-                height: 70vh;
+            .sidebar.collapsed {
+                width: 0 !important;
+                min-width: 0 !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                opacity: 0;
+                visibility: hidden;
+                border-left: none !important;
+            }
+
+            .sidebar-overlay {
+                display: none !important;
+            }
+
+            .main-header .top-toggle-btn {
+                display: flex;
+            }
+
+            .main-footer {
+                padding: 20px 40px 40px 40px;
+            }
+
+            .chat-area {
+                padding: 20px 40px 120px 40px;
+            }
+
+            .input-container {
+                padding: 15px 20px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .main-header .top-toggle-btn {
+                display: flex;
+            }
+
+            .sidebar:not(.open) {
+                right: -100%;
+            }
+
+            .sidebar.open {
+                right: 0;
+            }
+
+            .header-title h2 {
+                font-size: 16px;
+            }
+
+            .input-container {
+                padding: 10px 14px;
+            }
+
+            .chat-area {
+                padding: 10px 15px 130px 15px;
             }
 
             .message-wrapper {
                 max-width: 95%;
             }
 
-            .input-container {
-                margin: 0 10px;
+            .message-box {
+                font-size: 13px;
+            }
+
+            .landing-greeting h1 {
+                font-size: 22px;
             }
         }
     </style>
 </head>
 
 <body>
-
     <div class="app-container">
-        <!-- Sidebar -->
-        <aside class="sidebar">
+
+        <!-- طبقة التظليل عند فتح القائمة -->
+        <div id="sidebarOverlay" class="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+        <!-- القائمة الجانبية -->
+        <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
-                <div class="brand-logo">Nx</div>
+                <img src="/static/logo-removebg-preview.png?v=4" class="brand-logo-img" alt="Nexara Logo">
                 <div class="brand-info">
-                    <h3>Nexara AI Studio</h3>
+                    <h3>Nexara</h3>
                     <p>مساحة المساعد الذكي</p>
                 </div>
             </div>
             <button id="newChatBtn" class="new-chat-btn"><i class="fa-solid fa-plus"></i> محادثة جديدة</button>
             <div class="search-bar">
                 <i class="fa-solid fa-magnifying-glass"></i>
-                <input type="text" placeholder="ابحث في المحادثات...">
+                <input type="text" id="searchInput" placeholder="ابحث في المحادثات...">
             </div>
             <div class="recent-chats">
                 <span class="section-title">المحادثات الأخيرة</span>
-                <div class="chat-item active">
-                    <i class="fa-regular fa-comment-dots"></i>
-                    <div class="chat-item-text">
-                        <h4>حسابات Nexara الذكية</h4>
-                        <p>تفاعل حي ومستقر بالكامل</p>
-                    </div>
-                </div>
+                <div id="conversationsList"></div>
             </div>
             <div class="sidebar-footer">
-                <div class="footer-item" onclick="alert('📚 مكتبة الأوامر تحتوي على اختصارات مخصصة لـ Nexara!')"><i
-                        class="fa-regular fa-folder-open"></i> مكتبة الأوامر</div>
-                <div class="footer-item" onclick="alert('⚙️ الإعدادات: يمكنك تخصيص دقة الفصوص من هنا قريباً.')"><i
-                        class="fa-solid fa-gear"></i> الإعدادات</div>
+                <div class="footer-item" onclick="openLibrary()"><i class="fa-regular fa-folder-open"></i> مكتبة الأوامر
+                </div>
+                <div class="footer-item" onclick="openSettings()"><i class="fa-solid fa-gear"></i> الإعدادات</div>
             </div>
         </aside>
 
-        <!-- Main Content -->
+        <!-- منطقة المحادثة الرئيسية -->
         <main class="main-content">
             <header class="main-header">
-                <div style="display: flex; align-items: center; gap: 15px;">
+                <div
+                    style="display: flex; align-items: center; gap: 12px; width: 100%; justify-content: space-between;">
+                    <!-- زر القائمة الجانبية (هامبرغر) -->
                     <button id="topSidebarToggle" class="top-toggle-btn" title="إخفاء / إظهار القائمة">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                            stroke-linecap="round" stroke-linejoin="round">
-                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                            <line x1="9" y1="3" x2="9" y2="21"></line>
-                            <polyline class="toggle-arrow" points="13 8 17 12 13 16"></polyline>
-                        </svg>
+                        <i class="fa-solid fa-bars"></i>
                     </button>
-                    <div class="header-title">
-                        <h2>الفصوص المستقلة لـ Nexara</h2>
+
+                    <div class="header-title" style="flex: 1; text-align: center;">
+                        <h2>مساعد Nexara</h2>
                         <p>النسخة التفاعلية الكاملة</p>
                     </div>
+
+                    <!-- زر وهمي للحفاظ على التوازن -->
+                    <div style="width: 40px;"></div>
                 </div>
             </header>
 
@@ -506,16 +801,18 @@
 
             <footer class="main-footer">
                 <div class="input-container">
-                    <input type="text" id="userInput" placeholder="اكتب رسالتك هنا...">
+                    <div class="input-row">
+                        <input type="text" id="userInput" placeholder="اكتب رسالتك هنا...">
+                        <button id="sendBtn" class="send-btn"><i class="fa-solid fa-arrow-left"></i></button>
+                    </div>
                     <div class="input-toolbar">
                         <div class="tools">
                             <span class="tool-tag" id="webTool"><i class="fa-solid fa-globe"></i> ويب</span>
                             <span class="tool-tag" id="codeTool"><i class="fa-solid fa-code"></i> كود</span>
                             <span class="tool-tag" id="voiceTool"><i class="fa-solid fa-microphone"></i> صوت</span>
                         </div>
-                        <div style="display: flex; align-items: center;">
-                            <span class="version-text">Nexara v0.1</span>
-                            <button id="sendBtn" class="send-btn"><i class="fa-solid fa-arrow-left"></i></button>
+                        <div class="right-actions">
+                            <span class="version-text">Nexara 0.1</span>
                         </div>
                     </div>
                 </div>
@@ -523,136 +820,23 @@
         </main>
     </div>
 
-    <!-- === الـ JavaScript (النسخة المعدلة لضمان ظهور مؤشر التحميل) === -->
-    <script>
-        let currentMode = 'general';
-        let thinkingMessage = null;
-
-        // ربط الأدوات
-        document.getElementById('webTool').addEventListener('click', function () { toggleMode('web', this); });
-        document.getElementById('codeTool').addEventListener('click', function () { toggleMode('code', this); });
-        document.getElementById('voiceTool').addEventListener('click', function () { alert("🎙️ فص الصوت: جاري الاتصال بالمايكروفون..."); });
-
-        function toggleMode(mode, element) {
-            if (currentMode === mode) {
-                currentMode = 'general';
-                element.classList.remove('active-mode');
-            } else {
-                document.querySelectorAll('.tool-tag').forEach(t => t.classList.remove('active-mode'));
-                currentMode = mode;
-                element.classList.add('active-mode');
-            }
-        }
-
-        document.getElementById('userInput').addEventListener('keypress', function (e) {
-            if (e.key === 'Enter') sendMessage();
-        });
-
-        function toggleSidebar() {
-            const sidebar = document.querySelector('.sidebar');
-            const bottomIcon = document.querySelector('#sendBtn i');
-            sidebar.classList.toggle('collapsed');
-            if (sidebar.classList.contains('collapsed')) {
-                bottomIcon.style.transform = 'rotate(180deg)';
-            } else {
-                bottomIcon.style.transform = 'rotate(0deg)';
-            }
-        }
-
-        document.getElementById('topSidebarToggle').addEventListener('click', toggleSidebar);
-
-        document.getElementById('sendBtn').addEventListener('click', function () {
-            const userInputField = document.getElementById('userInput');
-            if (userInputField.value.trim() !== '') {
-                sendMessage();
-            } else {
-                toggleSidebar();
-            }
-        });
-
-        document.getElementById('newChatBtn').addEventListener('click', function () {
-            document.getElementById('chatBox').innerHTML = `<div class="landing-greeting" id="landingGreeting"><h1>مرحبا، كيف يمكنني مساعدتك اليوم؟</h1></div>`;
-            currentMode = 'general';
-            document.querySelectorAll('.tool-tag').forEach(t => t.classList.remove('active-mode'));
-        });
-
-        // دالة إرسال الرسائل (تم إصلاح مشكلة عدم ظهور "يفكر...")
-        function sendMessage() {
-            const inputField = document.getElementById('userInput');
-            const query = inputField.value.trim();
-            if (query === '') return;
-
-            const chatBox = document.getElementById('chatBox');
-            const greeting = document.getElementById('landingGreeting');
-            if (greeting) { greeting.remove(); }
-
-            // إضافة رسالة المستخدم
-            const userWrapper = document.createElement('div');
-            userWrapper.className = 'message-wrapper user';
-            userWrapper.innerHTML = `<div class="avatar user-av">U</div><div class="message-box">${query}</div>`;
-            chatBox.appendChild(userWrapper);
-
-            inputField.value = '';
-            chatBox.scrollTop = chatBox.scrollHeight;
-
-            // ── إضافة مؤشر يفكر... (مع أيقونة دوارة) ──
-            thinkingMessage = document.createElement('div');
-            thinkingMessage.className = 'message-wrapper bot';
-            thinkingMessage.innerHTML = `
-                <div class="avatar bot-av">AI</div>
-                <div class="message-box">
-                    <i class="fa-solid fa-circle-notch fa-spin"></i> يفكر...
-                </div>
-            `;
-            chatBox.appendChild(thinkingMessage);
-
-            // [الحل السحري] إجبار المتصفح على رسم الرسالة فوراً قبل إرسال الطلب
-            chatBox.scrollTop = chatBox.scrollHeight;
-
-            // تأجيل الطلب 50 مللي ثانية لضمان أن المتصفح قد رسم مؤشر التحميل
-            setTimeout(() => {
-                fetch('/predict', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ input: query, mode: currentMode })
-                })
-                    .then(response => response.json())
-                    .then(data => {
-                        // حذف فقاعة التفكير
-                        if (thinkingMessage) {
-                            thinkingMessage.remove();
-                            thinkingMessage = null;
-                        }
-                        // عرض الرد الحقيقي
-                        const botWrapper = document.createElement('div');
-                        botWrapper.className = 'message-wrapper bot';
-                        botWrapper.innerHTML = `<div class="avatar bot-av">AI</div><div class="message-box">${data.response}</div>`;
-                        chatBox.appendChild(botWrapper);
-                        chatBox.scrollTop = chatBox.scrollHeight;
-                    })
-                    .catch(error => {
-                        console.error('Error:', error);
-                        if (thinkingMessage) {
-                            thinkingMessage.remove();
-                            thinkingMessage = null;
-                        }
-                        const errWrapper = document.createElement('div');
-                        errWrapper.className = 'message-wrapper bot';
-                        errWrapper.innerHTML = `<div class="avatar bot-av">AI</div><div class="message-box" style="background:#ffe6e6;">❌ حدث خطأ في الاتصال بالخادم.</div>`;
-                        chatBox.appendChild(errWrapper);
-                        chatBox.scrollTop = chatBox.scrollHeight;
-                    });
-            }, 50); // 50 مللي ثانية كافية جداً لظهور الرسالة
-        }
-    </script>
-    <!-- طبقة التفكير الدائمة -->
-    <div id="thinking-overlay"
-        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(5px); z-index: 9999; justify-content: center; align-items: center; flex-direction: column; color: white; font-size: 28px; font-weight: bold;">
-        <i class="fa-solid fa-circle-notch fa-spin" style="font-size: 50px; color: #0ed2be; margin-bottom: 20px;"></i>
-        يفكر...
+    <!-- المودال المخصص -->
+    <div id="modalOverlay" class="modal-overlay">
+        <div class="modal-box" id="modalBox">
+            <div class="modal-title" id="modalTitle">تأكيد الحذف</div>
+            <div id="modalContentContainer">
+                <input type="text" id="modalInput" class="modal-input" placeholder="أدخل الاسم الجديد..."
+                    style="display: none;">
+                <p id="modalMessage" style="color: var(--text-gray); margin-bottom: 0;"></p>
+            </div>
+            <div class="modal-buttons">
+                <button id="modalCancelBtn" class="modal-btn cancel">إلغاء</button>
+                <button id="modalConfirmBtn" class="modal-btn confirm">تأكيد</button>
+            </div>
+        </div>
     </div>
 
-    <script src="script.js"></script>
+    <script src="/static/script.js"></script>
 </body>
 
 </html>
