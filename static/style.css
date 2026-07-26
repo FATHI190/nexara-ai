@@ -360,3 +360,38 @@ body {
         padding: 10px;
     }
 }
+
+/* تنسيق الكارت النشط والجديد ليكون مطابقاً لصورتك */
+.chat-card {
+    background-color: #cbf3ee;
+    border-radius: 16px;
+    padding: 16px;
+    margin-bottom: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.chat-card.active {
+    border: 2px solid #00b894;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.chat-card-title {
+    font-weight: bold;
+    color: #0f3833;
+    margin: 0 0 6px 0;
+    font-size: 15px;
+}
+
+.chat-card-desc {
+    color: #4a7a75;
+    font-size: 12px;
+    margin: 0;
+}
+
+.chat-card-icon {
+    color: #00b894;
+}
