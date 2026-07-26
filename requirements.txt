@@ -1,2 +1,7 @@
 Flask==3.0.0
 gunicorn==21.2.0
+googlesearch-python==1.2.3
+duckduckgo-search
+wikipedia
+deep-translator
+requests
