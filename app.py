@@ -46,11 +46,40 @@ def close_connection(exception):
     if db is not None:
         db.close()
 
+
+# ======================================================================
+# 🔥 تم نقل تهيئة قاعدة البيانات إلى هنا لتعمل مع Gunicorn على Render
+# ======================================================================
+try:
+    with app.app_context():
+        db = get_db()
+        if db:
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id INTEGER NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            db.commit()
+            print("✅ قاعدة البيانات تعمل بشكل طبيعي.")
+except Exception as e:
+    print(f"⚠️ قاعدة البيانات لم تعمل! لكن الخادم سيعمل بوضعية (الذاكرة المؤقتة).")
+
+
 # ======================================================================
 # دوال الذكاء الاصطناعي والرياضيات
 # ======================================================================
-
-
 def generate_math_data(op):
     X, Y = [], []
     for _ in range(500):
@@ -306,12 +335,10 @@ def predict():
 
         final_response = ""
 
-        # 🔥 بحث إنترنت خالص (لا إجابات محلية)
         if mode == 'web':
             try:
                 search_success = False
                 final_response = ""
-
                 translated_query = translate_text(user_input)
                 clean_eng_query = re.sub(
                     r'[^\w\s]', '', translated_query).strip()
@@ -326,7 +353,6 @@ def predict():
                             timeout=2
                         ))
                         response = future.result(timeout=1.5)
-
                         if response.status_code == 200:
                             data_ddg = response.json()
                             abstract = data_ddg.get('AbstractText', '')
@@ -359,7 +385,7 @@ def predict():
                     except Exception:
                         pass
 
-                # 3. إذا فشل الكل (لا إجابات محلية!)
+                # 3. إذا فشل الكل
                 if not search_success:
                     final_response = "لم يعثر البحث على أي نتائج. تأكد من أن الخادم متصل بالإنترنت أو حاول لاحقاً."
 
@@ -440,16 +466,7 @@ def get_user_id():
 
 
 if __name__ == '__main__':
-    try:
-        with app.app_context():
-            db = get_db()
-            if db:
-                db.execute('CREATE TABLE IF NOT EXISTS conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, title TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
-                db.execute('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INTEGER NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
-                db.commit()
-                print("✅ قاعدة البيانات تعمل بشكل طبيعي.")
-    except Exception as e:
-        print(f"⚠️ قاعدة البيانات لم تعمل! لكن الخادم سيعمل بوضعية (الذاكرة المؤقتة).")
-
-    print("🚀 خادم المساعد الذكي يعمل على المنفذ 5001!")
-    app.run(debug=True, port=5001)
+    # لم نعد بحاجة لتهيئة قاعدة البيانات هنا لأنها نُقلت للأعلى
+    import os
+    port = int(os.environ.get('PORT', 5001))
+    app.run(host='0.0.0.0', port=port)
