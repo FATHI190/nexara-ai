@@ -1,17 +1,16 @@
 let currentConversationId = null;
 let currentMode = 'general';
 let activeFolderId = null; // null = عرض الكل, 0 = غير مصنف
-let moveConversationTargetId = null; // لحفظ معرف المحادثة المراد نقلها
+let moveConversationTargetId = null;
 
-// متغيرات المودال
 let pendingAction = null;
 let pendingConversationId = null;
 let pendingCurrentTitle = '';
-let pendingFolderId = null; // للمجلدات
+let pendingFolderId = null;
 
-// 🌟 متغيرات الصوت
 let recognition = null;
 let isListening = false;
+let silenceTimer = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     initApp();
@@ -39,65 +38,36 @@ document.addEventListener('DOMContentLoaded', () => {
     setupSearchFeature();
 });
 
-// ======================================================================
-// 🔥 دوال المجلدات والمحادثات (مع تحسين زر النقل وإضافة السجلات)
-// ======================================================================
-
 async function loadFolders() {
     try {
         const response = await fetch('/api/folders');
         const folders = await response.json();
         const container = document.getElementById('foldersList');
         if (!container) return;
-
         container.innerHTML = '';
-
-        // دالة مساعدة لإنشاء زر مجلد
         const createFolderBtn = (id, name, isSpecial = false) => {
             const btn = document.createElement('div');
             btn.className = 'folder-item' + (activeFolderId === id ? ' active' : '');
             btn.onclick = () => switchFolder(id);
-
             let icon = 'fa-solid fa-folder';
             if (id === null) icon = 'fa-solid fa-inbox';
             else if (id === 0) icon = 'fa-regular fa-folder-open';
-
             let controlsHtml = '';
             if (!isSpecial) {
-                controlsHtml = `
-                    <div class="folder-controls" onclick="event.stopPropagation();">
-                        <i class="fa-regular fa-pen-to-square" onclick="openFolderRenameModal(${id}, '${escapeHTML(name)}')" title="إعادة تسمية"></i>
-                        <i class="fa-regular fa-trash-can" onclick="openFolderDeleteModal(${id})" title="حذف المجلد"></i>
-                    </div>
-                `;
+                controlsHtml = `<div class="folder-controls" onclick="event.stopPropagation();"><i class="fa-regular fa-pen-to-square" onclick="openFolderRenameModal(${id}, '${escapeHTML(name)}')"></i><i class="fa-regular fa-trash-can" onclick="openFolderDeleteModal(${id})"></i></div>`;
             }
-
-            btn.innerHTML = `
-                <i class="${icon}"></i>
-                <span class="folder-name">${escapeHTML(name)}</span>
-                ${controlsHtml}
-            `;
+            btn.innerHTML = `<i class="${icon}"></i><span class="folder-name">${escapeHTML(name)}</span>${controlsHtml}`;
             return btn;
         };
-
         container.appendChild(createFolderBtn(null, 'الكل', true));
         container.appendChild(createFolderBtn(0, 'غير مصنف', true));
-
-        folders.forEach(folder => {
-            container.appendChild(createFolderBtn(folder.id, folder.name, false));
-        });
-    } catch (error) {
-        console.error('خطأ في تحميل المجلدات:', error);
-    }
+        folders.forEach(folder => { container.appendChild(createFolderBtn(folder.id, folder.name, false)); });
+    } catch (error) { console.error('خطأ في تحميل المجلدات:', error); }
 }
 
 async function createNewChat(folderId) {
     try {
-        const response = await fetch('/api/new_session', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ folder_id: folderId || 0 })
-        });
+        const response = await fetch('/api/new_session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folder_id: folderId || 0 }) });
         const data = await response.json();
         if (data && data.id) {
             currentConversationId = data.id;
@@ -107,153 +77,80 @@ async function createNewChat(folderId) {
             return true;
         }
         return false;
-    } catch (error) {
-        console.error('خطأ في إنشاء محادثة جديدة:', error);
-        return false;
-    }
+    } catch (error) { console.error('خطأ في إنشاء محادثة جديدة:', error); return false; }
 }
 
-function switchFolder(folderId) {
-    activeFolderId = folderId;
-    loadFolders();
-    loadSessionsList(activeFolderId);
-}
+function switchFolder(folderId) { activeFolderId = folderId; loadFolders(); loadSessionsList(activeFolderId); }
 
 async function loadSessionsList(folderId = null) {
     try {
         let url = '/api/sessions';
-        if (folderId !== null && folderId !== undefined) {
-            url += `?folder_id=${folderId}`;
-        }
-
-        console.log(`🔍 جاري جلب المحادثات من: ${url}`);
+        if (folderId !== null && folderId !== undefined) url += `?folder_id=${folderId}`;
         const response = await fetch(url);
         const sessions = await response.json();
-        console.log(`📦 عدد المحادثات المستلمة: ${sessions.length}`, sessions);
-
         const sessionsContainer = document.getElementById('conversationsList');
         if (!sessionsContainer) return;
-
         sessionsContainer.innerHTML = '';
-
         sessions.forEach(session => {
-            // بناء الكارت باستخدام DOM API
             const card = document.createElement('div');
             card.classList.add('chat-item');
             card.dataset.conversationId = session.id;
-
-            if (session.id === currentConversationId) {
-                card.classList.add('active');
-            }
-
-            // 1. بناء جزء النص
+            if (session.id === currentConversationId) card.classList.add('active');
             const textContainer = document.createElement('div');
             textContainer.className = 'chat-item-text';
             textContainer.onclick = () => switchConversation(session.id);
-
             const titleH4 = document.createElement('h4');
             titleH4.innerText = escapeHTML(session.title);
             textContainer.appendChild(titleH4);
-
             const descP = document.createElement('p');
             descP.innerText = 'تفاعل حي ومستقر بالكامل';
             textContainer.appendChild(descP);
-
             card.appendChild(textContainer);
-
-            // 2. بناء جزء الأزرار
             const actionsContainer = document.createElement('div');
             actionsContainer.className = 'chat-item-actions';
-
-            // زر النقل (مع سجل للتصحيح)
             const moveBtn = document.createElement('i');
             moveBtn.className = 'fa-solid fa-arrow-right-arrow-left action-btn';
-            moveBtn.title = 'نقل المحادثة';
-            moveBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                console.log(`🔄 تم الضغط على زر النقل للمحادثة: ${session.id}`);
-                openMoveModal(session.id);
-            });
+            moveBtn.addEventListener('click', (e) => { e.stopPropagation(); openMoveModal(session.id); });
             actionsContainer.appendChild(moveBtn);
-
-            // زر إعادة التسمية
             const renameBtn = document.createElement('i');
             renameBtn.className = 'fa-regular fa-pen-to-square action-btn';
-            renameBtn.title = 'تغيير الاسم';
-            renameBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                openRenameModal(session.id, session.title);
-            });
+            renameBtn.addEventListener('click', (e) => { e.stopPropagation(); openRenameModal(session.id, session.title); });
             actionsContainer.appendChild(renameBtn);
-
-            // زر الحذف
             const deleteBtn = document.createElement('i');
             deleteBtn.className = 'fa-regular fa-trash-can action-btn';
-            deleteBtn.title = 'حذف المحادثة';
-            deleteBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                openDeleteModal(session.id);
-            });
+            deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); openDeleteModal(session.id); });
             actionsContainer.appendChild(deleteBtn);
-
             card.appendChild(actionsContainer);
-
-            // 3. إضافة الكارت إلى القائمة
             sessionsContainer.appendChild(card);
         });
-    } catch (error) {
-        console.error('❌ خطأ في جلب المحادثات:', error);
-    }
+    } catch (error) { console.error('❌ خطأ في جلب المحادثات:', error); }
 }
 
-// --- إنشاء مجلد جديد ---
-function openCreateFolderModal() {
-    document.getElementById('folderModalOverlay').style.display = 'flex';
-    document.getElementById('folderInput').value = '';
-    document.getElementById('folderInput').focus();
-}
-function closeFolderModal() {
-    document.getElementById('folderModalOverlay').style.display = 'none';
-}
+function openCreateFolderModal() { document.getElementById('folderModalOverlay').style.display = 'flex'; document.getElementById('folderInput').value = ''; document.getElementById('folderInput').focus(); }
+function closeFolderModal() { document.getElementById('folderModalOverlay').style.display = 'none'; }
 async function createFolder() {
     const name = document.getElementById('folderInput').value.trim();
     if (!name) return;
     try {
-        const response = await fetch('/api/folders', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name })
-        });
+        const response = await fetch('/api/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
         const data = await response.json();
-        if (data.success) {
-            closeFolderModal();
-            loadFolders();
-        }
-    } catch (error) {
-        console.error('خطأ:', error);
-    }
+        if (data.success) { closeFolderModal(); loadFolders(); }
+    } catch (error) { console.error('خطأ:', error); }
 }
 
-// --- إعادة تسمية مجلد ---
 function openFolderRenameModal(folderId, currentName) {
-    pendingAction = 'rename_folder';
-    pendingFolderId = folderId;
+    pendingAction = 'rename_folder'; pendingFolderId = folderId;
     document.getElementById('modalTitle').innerText = 'تغيير اسم المجلد';
     document.getElementById('modalMessage').style.display = 'none';
     const input = document.getElementById('modalInput');
-    input.style.display = 'block';
-    input.value = currentName;
+    input.style.display = 'block'; input.value = currentName;
     document.getElementById('modalConfirmBtn').className = 'modal-btn confirm';
     document.getElementById('modalConfirmBtn').innerText = 'حفظ';
     document.getElementById('modalOverlay').classList.add('show');
-    input.focus();
-    input.select();
+    input.focus(); input.select();
 }
-
-// --- حذف مجلد ---
 function openFolderDeleteModal(folderId) {
-    pendingAction = 'delete_folder';
-    pendingFolderId = folderId;
+    pendingAction = 'delete_folder'; pendingFolderId = folderId;
     document.getElementById('modalTitle').innerText = 'تأكيد حذف المجلد';
     document.getElementById('modalMessage').style.display = 'block';
     document.getElementById('modalMessage').innerText = 'هل أنت متأكد من حذف هذا المجلد؟ سيتم نقل محادثاته إلى "غير مصنف".';
@@ -263,87 +160,43 @@ function openFolderDeleteModal(folderId) {
     document.getElementById('modalOverlay').classList.add('show');
 }
 
-// --- نقل محادثة (مع إصلاحات) ---
 async function openMoveModal(conversationId) {
-    console.log(`⏳ فتح نافذة النقل للمحادثة ${conversationId}`);
-
     moveConversationTargetId = conversationId;
     const select = document.getElementById('moveFolderSelect');
-    const overlay = document.getElementById('moveModalOverlay');
-
-    if (!select || !overlay) {
-        console.error('❌ خطأ: لم يتم العثور على عناصر مودال النقل في الـ HTML!');
-        return;
-    }
-
     select.innerHTML = '<option value="0">غير مصنف</option>';
-
     try {
         const res = await fetch('/api/folders');
         const folders = await res.json();
-        folders.forEach(f => {
-            const opt = document.createElement('option');
-            opt.value = f.id;
-            opt.innerText = f.name;
-            select.appendChild(opt);
-        });
-        overlay.style.display = 'flex';
-    } catch (e) {
-        console.error('خطأ في تحميل المجلدات للنقل:', e);
-    }
+        folders.forEach(f => { const opt = document.createElement('option'); opt.value = f.id; opt.innerText = f.name; select.appendChild(opt); });
+        document.getElementById('moveModalOverlay').style.display = 'flex';
+    } catch (e) { console.error('خطأ في تحميل المجلدات للنقل:', e); }
 }
-function closeMoveModal() {
-    document.getElementById('moveModalOverlay').style.display = 'none';
-    moveConversationTargetId = null;
-}
+function closeMoveModal() { document.getElementById('moveModalOverlay').style.display = 'none'; moveConversationTargetId = null; }
 async function executeMove() {
     if (!moveConversationTargetId) return;
     const folderId = parseInt(document.getElementById('moveFolderSelect').value);
     try {
-        const response = await fetch('/api/move_conversation', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ conversation_id: moveConversationTargetId, folder_id: folderId })
-        });
+        const response = await fetch('/api/move_conversation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversation_id: moveConversationTargetId, folder_id: folderId }) });
         const data = await response.json();
-        if (data.success) {
-            closeMoveModal();
-            loadSessionsList(activeFolderId);
-            loadFolders();
-        }
+        if (data.success) { closeMoveModal(); loadSessionsList(activeFolderId); loadFolders(); }
     } catch (error) { console.error('خطأ في النقل:', error); }
 }
-
-// ======================================================================
-// بقية الدوال (المودال الرئيسي والواجهة)
-// ======================================================================
 
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
     const overlay = document.getElementById('sidebarOverlay');
-    if (window.innerWidth <= 768) {
-        sidebar.classList.toggle('open');
-        overlay.classList.toggle('active');
-    } else {
-        sidebar.classList.toggle('collapsed');
-    }
+    if (window.innerWidth <= 768) { sidebar.classList.toggle('open'); overlay.classList.toggle('active'); }
+    else { sidebar.classList.toggle('collapsed'); }
 }
 
 async function initApp() {
     try {
         const response = await fetch('/api/current_session');
         const data = await response.json();
-        if (data && data.id) {
-            currentConversationId = data.id;
-            await loadHistory(currentConversationId);
-        } else {
-            await createNewChat(activeFolderId);
-        }
-        await loadFolders();
-        await loadSessionsList(activeFolderId);
-    } catch (error) {
-        console.error('خطأ في التهيئة:', error);
-    }
+        if (data && data.id) { currentConversationId = data.id; await loadHistory(currentConversationId); }
+        else { await createNewChat(activeFolderId); }
+        await loadFolders(); await loadSessionsList(activeFolderId);
+    } catch (error) { console.error('خطأ في التهيئة:', error); }
 }
 
 async function switchConversation(conversationId) {
@@ -361,38 +214,29 @@ async function loadHistory(conversationId) {
         const response = await fetch('/api/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversation_id: conversationId }) });
         const messages = await response.json();
         messages.forEach(msg => { appendMessage(msg.role === 'user' ? 'user' : 'bot', msg.content); });
-    } catch (error) {
-        console.error('خطأ في تحميل الرسائل:', error);
-    }
+    } catch (error) { console.error('خطأ في تحميل الرسائل:', error); }
 }
 
 function setupModalListeners() {
     document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
-    document.getElementById('modalOverlay').addEventListener('click', (e) => {
-        if (e.target === document.getElementById('modalOverlay')) closeModal();
-    });
+    document.getElementById('modalOverlay').addEventListener('click', (e) => { if (e.target === document.getElementById('modalOverlay')) closeModal(); });
     document.getElementById('modalConfirmBtn').addEventListener('click', executeModalAction);
 }
 
 function openRenameModal(conversationId, currentTitle) {
-    pendingAction = 'rename';
-    pendingConversationId = conversationId;
-    pendingCurrentTitle = currentTitle;
+    pendingAction = 'rename'; pendingConversationId = conversationId; pendingCurrentTitle = currentTitle;
     document.getElementById('modalTitle').innerText = 'تغيير اسم المحادثة';
     document.getElementById('modalMessage').style.display = 'none';
     const input = document.getElementById('modalInput');
-    input.style.display = 'block';
-    input.value = currentTitle;
+    input.style.display = 'block'; input.value = currentTitle;
     document.getElementById('modalConfirmBtn').className = 'modal-btn confirm';
     document.getElementById('modalConfirmBtn').innerText = 'حفظ';
     document.getElementById('modalOverlay').classList.add('show');
-    input.focus();
-    input.select();
+    input.focus(); input.select();
 }
 
 function openDeleteModal(conversationId) {
-    pendingAction = 'delete';
-    pendingConversationId = conversationId;
+    pendingAction = 'delete'; pendingConversationId = conversationId;
     document.getElementById('modalTitle').innerText = 'تأكيد الحذف';
     document.getElementById('modalMessage').style.display = 'block';
     document.getElementById('modalMessage').innerText = 'هل أنت متأكد من حذف هذه المحادثة وكل رسائلها؟';
@@ -404,6 +248,18 @@ function openDeleteModal(conversationId) {
 
 function closeModal() {
     document.getElementById('modalOverlay').classList.remove('show');
+
+    const confirmBtn = document.getElementById('modalConfirmBtn');
+    confirmBtn.style.display = 'block';
+    confirmBtn.className = 'modal-btn confirm';
+    confirmBtn.innerText = 'تأكيد';
+    confirmBtn.onclick = executeModalAction;
+
+    const cancelBtn = document.getElementById('modalCancelBtn');
+    cancelBtn.innerText = 'إلغاء';
+    cancelBtn.className = 'modal-btn cancel';
+    cancelBtn.onclick = closeModal;
+
     pendingAction = null;
     pendingConversationId = null;
     pendingFolderId = null;
@@ -411,45 +267,25 @@ function closeModal() {
 
 async function executeModalAction() {
     if (!pendingAction) return;
-
-    // معالجة إعادة تسمية المجلد
     if (pendingAction === 'rename_folder') {
         const newName = document.getElementById('modalInput').value.trim();
         if (!newName) return closeModal();
-        try {
-            await fetch(`/api/folders/${pendingFolderId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newName }) });
-            closeModal();
-            loadFolders();
-        } catch (e) { console.error(e); }
+        try { await fetch(`/api/folders/${pendingFolderId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newName }) }); closeModal(); loadFolders(); }
+        catch (e) { console.error(e); }
         return;
     }
-
-    // معالجة حذف المجلد
     if (pendingAction === 'delete_folder') {
-        try {
-            await fetch(`/api/folders/${pendingFolderId}`, { method: 'DELETE' });
-            closeModal();
-            if (activeFolderId === pendingFolderId) switchFolder(null);
-            else loadFolders();
-        } catch (e) { console.error(e); }
+        try { await fetch(`/api/folders/${pendingFolderId}`, { method: 'DELETE' }); closeModal(); if (activeFolderId === pendingFolderId) switchFolder(null); else loadFolders(); }
+        catch (e) { console.error(e); }
         return;
     }
-
-    // بقية الحالات (تغيير اسم المحادثة وحذف المحادثة)
     if (!pendingConversationId) return;
     if (pendingAction === 'rename') {
         const newTitle = document.getElementById('modalInput').value.trim();
-        if (!newTitle) {
-            document.getElementById('modalMessage').style.display = 'block';
-            document.getElementById('modalMessage').innerText = '⚠️ لا يمكنك ترك الاسم فارغاً!';
-            document.getElementById('modalMessage').style.color = '#e74c3c';
-            return;
-        }
-        await performRename(pendingConversationId, newTitle);
-        closeModal();
+        if (!newTitle) { document.getElementById('modalMessage').style.display = 'block'; document.getElementById('modalMessage').innerText = '⚠️ لا يمكنك ترك الاسم فارغاً!'; document.getElementById('modalMessage').style.color = '#e74c3c'; return; }
+        await performRename(pendingConversationId, newTitle); closeModal();
     } else if (pendingAction === 'delete') {
-        await performDelete(pendingConversationId);
-        closeModal();
+        await performDelete(pendingConversationId); closeModal();
     }
 }
 
@@ -487,34 +323,25 @@ async function sendMessage() {
     if (!inputElement) return;
     const messageText = inputElement.value.trim();
     if (!messageText) return;
-
     const greeting = document.getElementById('landingGreeting');
     if (greeting) greeting.remove();
-
     if (!currentConversationId) {
         const success = await createNewChat(activeFolderId);
-        if (!success) {
-            appendMessage('bot', '⚠️ تعذر بدء محادثة جديدة. يرجى الضغط على زر "محادثة جديدة" يدوياً.');
-            return;
-        }
+        if (!success) { appendMessage('bot', '⚠️ تعذر بدء محادثة جديدة. يرجى الضغط على زر "محادثة جديدة" يدوياً.'); return; }
     }
-
     appendMessage('user', messageText);
     inputElement.value = '';
     const typingIndicator = appendTypingIndicator();
-
     try {
         const response = await fetch('/predict', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: messageText, mode: currentMode, conversation_id: currentConversationId }) });
         const data = await response.json();
         if (typingIndicator) typingIndicator.remove();
         appendMessage('bot', data.response);
         await loadSessionsList(activeFolderId);
-    } catch (error) {
-        if (typingIndicator) typingIndicator.remove();
-        appendMessage('bot', '❌ فشل الاتصال بالخادم. تأكد من تشغيل الخادم.');
-    }
+    } catch (error) { if (typingIndicator) typingIndicator.remove(); appendMessage('bot', '❌ فشل الاتصال بالخادم. تأكد من تشغيل الخادم.'); }
 }
 
+// 🔥 دالة appendMessage المحدثة لتحويل الروابط
 function appendMessage(sender, text) {
     const chatContainer = document.getElementById('chatBox');
     if (!chatContainer) return;
@@ -523,7 +350,12 @@ function appendMessage(sender, text) {
     if (sender === 'user') {
         wrapper.innerHTML = `<div class="avatar-text user-av">U</div><div class="message-box">${escapeHTML(text)}</div>`;
     } else {
-        wrapper.innerHTML = `<img src="/static/logo-removebg-preview.png?v=4" class="avatar-img bot-av" alt="Nexara"><div class="message-box">${escapeHTML(text)}</div>`;
+        // تحويل صيغة Markdown [text](url) إلى رابط HTML
+        let formattedText = text;
+        formattedText = formattedText.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color: var(--primary-teal); text-decoration: underline; font-weight: bold;">$1</a>');
+        formattedText = formattedText.replace(/\n/g, '<br>');
+
+        wrapper.innerHTML = `<img src="/static/logo-removebg-preview.png?v=4" class="avatar-img bot-av" alt="Nexara"><div class="message-box">${formattedText}</div>`;
     }
     chatContainer.appendChild(wrapper);
     setTimeout(() => { chatContainer.scrollTop = chatContainer.scrollHeight; }, 100);
@@ -547,19 +379,26 @@ function setupVoiceRecognition() {
     recognition.lang = 'ar-SA';
     recognition.continuous = false;
     recognition.interimResults = false;
+    recognition.onstart = function () {
+        isListening = true;
+        clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => { if (isListening) { recognition.stop(); } }, 3000);
+    };
     recognition.onresult = function (event) {
+        clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => { if (isListening) { recognition.stop(); } }, 3000);
         const transcript = event.results[0][0].transcript;
         const inputField = document.getElementById('userInput');
-        if (inputField) {
-            inputField.value = transcript;
-            inputField.focus();
-            inputField.setSelectionRange(transcript.length, transcript.length);
-        }
+        if (inputField) { inputField.value = transcript; inputField.focus(); inputField.setSelectionRange(transcript.length, transcript.length); }
     };
     recognition.onend = function () {
+        clearTimeout(silenceTimer);
         isListening = false;
         const voiceBtn = document.getElementById('voiceTool');
-        if (voiceBtn) { voiceBtn.classList.remove('listening-mode'); voiceBtn.innerHTML = '<i class="fa-solid fa-microphone"></i> صوت'; }
+        if (voiceBtn) {
+            voiceBtn.classList.remove('listening-mode');
+            voiceBtn.innerHTML = `<div class="mic-container"><i class="fa-solid fa-microphone"></i><div class="wave"></div><div class="wave"></div><div class="wave"></div><div class="wave"></div><div class="wave"></div></div> صوت`;
+        }
     };
     recognition.onerror = function (event) { console.warn('خطأ في التعرف الصوتي:', event.error); recognition.onend(); };
 }
@@ -572,7 +411,7 @@ function toggleVoiceRecording() {
         recognition.start();
         isListening = true;
         voiceBtn.classList.add('listening-mode');
-        voiceBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> استماع...';
+        voiceBtn.innerHTML = `<div class="mic-container"><i class="fa-solid fa-microphone"></i><div class="wave"></div><div class="wave"></div><div class="wave"></div><div class="wave"></div><div class="wave"></div></div> استماع...`;
     } catch (error) { console.error('فشل بدء التسجيل:', error); recognition.onend(); }
 }
 
@@ -584,7 +423,7 @@ function setupModeSelectors() {
                 b.classList.remove('active-mode');
                 if (b.id === 'voiceTool') {
                     b.classList.remove('listening-mode');
-                    b.innerHTML = '<i class="fa-solid fa-microphone"></i> صوت';
+                    b.innerHTML = `<div class="mic-container"><i class="fa-solid fa-microphone"></i><div class="wave"></div><div class="wave"></div><div class="wave"></div><div class="wave"></div><div class="wave"></div></div> صوت`;
                     if (isListening && recognition) recognition.stop();
                     isListening = false;
                 }
@@ -610,12 +449,8 @@ function setupSearchFeature() {
             let foundInTitle = false;
             items.forEach(item => {
                 const title = item.querySelector('h4').innerText.toLowerCase();
-                if (title.includes(query)) {
-                    item.style.display = 'flex';
-                    foundInTitle = true;
-                } else {
-                    item.style.display = 'none';
-                }
+                if (title.includes(query)) { item.style.display = 'flex'; foundInTitle = true; }
+                else { item.style.display = 'none'; }
             });
             if (!foundInTitle && query.length >= 2) {
                 fetch(`/api/search_conversations?q=${encodeURIComponent(query)}`)
@@ -623,11 +458,7 @@ function setupSearchFeature() {
                     .then(results => {
                         items.forEach(item => item.style.display = 'none');
                         results.forEach(res => {
-                            items.forEach(item => {
-                                if (parseInt(item.dataset.conversationId) === res.id) {
-                                    item.style.display = 'flex';
-                                }
-                            });
+                            items.forEach(item => { if (parseInt(item.dataset.conversationId) === res.id) item.style.display = 'flex'; });
                         });
                     })
                     .catch(err => console.error('خطأ في البحث في المحتوى:', err));
@@ -636,7 +467,32 @@ function setupSearchFeature() {
     });
 }
 
-function openLibrary() { console.log("📚 فتح مكتبة الأوامر (قيد التطوير)"); }
+// 🔥 تحديث دالة فتح مكتبة الأوامر
+function openLibrary() {
+    document.getElementById('modalTitle').innerText = '📖 مكتبة الأوامر';
+    document.getElementById('modalMessage').style.display = 'block';
+    document.getElementById('modalMessage').innerHTML = `
+        📖 <strong>قائمة أوامر Nexara:</strong><br><br>
+        <code>/help</code> - عرض قائمة الأوامر.<br>
+        <code>/rename [اسم جديد]</code> - تغيير عنوان المحادثة الحالية.<br>
+        <code>/delete</code> - حذف المحادثة الحالية بالكامل.<br>
+        <code>/export</code> - تصدير المحادثة الحالية كملف نصي (سيتم تنزيله).<br>
+        <code>/folder [اسم المجلد]</code> - إنشاء مجلد جديد.<br>
+        <code>/move [اسم المجلد]</code> - نقل المحادثة الحالية إلى مجلد.<br><br>
+        <i>نصيحة: لا تضع شرطة مائلة (/) في نهاية الأمر.</i>
+    `;
+    document.getElementById('modalInput').style.display = 'none';
+
+    const confirmBtn = document.getElementById('modalConfirmBtn');
+    confirmBtn.style.display = 'none';
+
+    const cancelBtn = document.getElementById('modalCancelBtn');
+    cancelBtn.innerText = 'إغلاق';
+    cancelBtn.className = 'modal-btn cancel';
+
+    document.getElementById('modalOverlay').classList.add('show');
+}
+
 function openSettings() { console.log("⚙️ فتح الإعدادات (قيد التطوير)"); }
 function escapeHTML(str) {
     if (!str) return '';
