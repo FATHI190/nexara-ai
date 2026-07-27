@@ -1,8 +1,15 @@
 let currentConversationId = null;
 let currentMode = 'general';
+let activeFolderId = null; // null = عرض الكل, 0 = غير مصنف
+let moveConversationTargetId = null; // لحفظ معرف المحادثة المراد نقلها
+
+// متغيرات المودال
 let pendingAction = null;
 let pendingConversationId = null;
 let pendingCurrentTitle = '';
+let pendingFolderId = null; // للمجلدات
+
+// 🌟 متغيرات الصوت
 let recognition = null;
 let isListening = false;
 
@@ -23,13 +30,293 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-    if (newChatBtn) newChatBtn.addEventListener('click', createNewChat);
+    if (newChatBtn) newChatBtn.addEventListener('click', () => createNewChat(activeFolderId));
     if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
 
     setupModeSelectors();
     setupModalListeners();
     setupVoiceRecognition();
+    setupSearchFeature();
 });
+
+// ======================================================================
+// 🔥 دوال المجلدات والمحادثات (مع تحسين زر النقل وإضافة السجلات)
+// ======================================================================
+
+async function loadFolders() {
+    try {
+        const response = await fetch('/api/folders');
+        const folders = await response.json();
+        const container = document.getElementById('foldersList');
+        if (!container) return;
+
+        container.innerHTML = '';
+
+        // دالة مساعدة لإنشاء زر مجلد
+        const createFolderBtn = (id, name, isSpecial = false) => {
+            const btn = document.createElement('div');
+            btn.className = 'folder-item' + (activeFolderId === id ? ' active' : '');
+            btn.onclick = () => switchFolder(id);
+
+            let icon = 'fa-solid fa-folder';
+            if (id === null) icon = 'fa-solid fa-inbox';
+            else if (id === 0) icon = 'fa-regular fa-folder-open';
+
+            let controlsHtml = '';
+            if (!isSpecial) {
+                controlsHtml = `
+                    <div class="folder-controls" onclick="event.stopPropagation();">
+                        <i class="fa-regular fa-pen-to-square" onclick="openFolderRenameModal(${id}, '${escapeHTML(name)}')" title="إعادة تسمية"></i>
+                        <i class="fa-regular fa-trash-can" onclick="openFolderDeleteModal(${id})" title="حذف المجلد"></i>
+                    </div>
+                `;
+            }
+
+            btn.innerHTML = `
+                <i class="${icon}"></i>
+                <span class="folder-name">${escapeHTML(name)}</span>
+                ${controlsHtml}
+            `;
+            return btn;
+        };
+
+        container.appendChild(createFolderBtn(null, 'الكل', true));
+        container.appendChild(createFolderBtn(0, 'غير مصنف', true));
+
+        folders.forEach(folder => {
+            container.appendChild(createFolderBtn(folder.id, folder.name, false));
+        });
+    } catch (error) {
+        console.error('خطأ في تحميل المجلدات:', error);
+    }
+}
+
+async function createNewChat(folderId) {
+    try {
+        const response = await fetch('/api/new_session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folder_id: folderId || 0 })
+        });
+        const data = await response.json();
+        if (data && data.id) {
+            currentConversationId = data.id;
+            const chatContainer = document.getElementById('chatBox');
+            if (chatContainer) chatContainer.innerHTML = '<div class="landing-greeting" id="landingGreeting"><h1>مرحبا، كيف يمكنني مساعدتك اليوم؟</h1></div>';
+            await loadSessionsList(activeFolderId);
+            return true;
+        }
+        return false;
+    } catch (error) {
+        console.error('خطأ في إنشاء محادثة جديدة:', error);
+        return false;
+    }
+}
+
+function switchFolder(folderId) {
+    activeFolderId = folderId;
+    loadFolders();
+    loadSessionsList(activeFolderId);
+}
+
+async function loadSessionsList(folderId = null) {
+    try {
+        let url = '/api/sessions';
+        if (folderId !== null && folderId !== undefined) {
+            url += `?folder_id=${folderId}`;
+        }
+
+        console.log(`🔍 جاري جلب المحادثات من: ${url}`);
+        const response = await fetch(url);
+        const sessions = await response.json();
+        console.log(`📦 عدد المحادثات المستلمة: ${sessions.length}`, sessions);
+
+        const sessionsContainer = document.getElementById('conversationsList');
+        if (!sessionsContainer) return;
+
+        sessionsContainer.innerHTML = '';
+
+        sessions.forEach(session => {
+            // بناء الكارت باستخدام DOM API
+            const card = document.createElement('div');
+            card.classList.add('chat-item');
+            card.dataset.conversationId = session.id;
+
+            if (session.id === currentConversationId) {
+                card.classList.add('active');
+            }
+
+            // 1. بناء جزء النص
+            const textContainer = document.createElement('div');
+            textContainer.className = 'chat-item-text';
+            textContainer.onclick = () => switchConversation(session.id);
+
+            const titleH4 = document.createElement('h4');
+            titleH4.innerText = escapeHTML(session.title);
+            textContainer.appendChild(titleH4);
+
+            const descP = document.createElement('p');
+            descP.innerText = 'تفاعل حي ومستقر بالكامل';
+            textContainer.appendChild(descP);
+
+            card.appendChild(textContainer);
+
+            // 2. بناء جزء الأزرار
+            const actionsContainer = document.createElement('div');
+            actionsContainer.className = 'chat-item-actions';
+
+            // زر النقل (مع سجل للتصحيح)
+            const moveBtn = document.createElement('i');
+            moveBtn.className = 'fa-solid fa-arrow-right-arrow-left action-btn';
+            moveBtn.title = 'نقل المحادثة';
+            moveBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                console.log(`🔄 تم الضغط على زر النقل للمحادثة: ${session.id}`);
+                openMoveModal(session.id);
+            });
+            actionsContainer.appendChild(moveBtn);
+
+            // زر إعادة التسمية
+            const renameBtn = document.createElement('i');
+            renameBtn.className = 'fa-regular fa-pen-to-square action-btn';
+            renameBtn.title = 'تغيير الاسم';
+            renameBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openRenameModal(session.id, session.title);
+            });
+            actionsContainer.appendChild(renameBtn);
+
+            // زر الحذف
+            const deleteBtn = document.createElement('i');
+            deleteBtn.className = 'fa-regular fa-trash-can action-btn';
+            deleteBtn.title = 'حذف المحادثة';
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openDeleteModal(session.id);
+            });
+            actionsContainer.appendChild(deleteBtn);
+
+            card.appendChild(actionsContainer);
+
+            // 3. إضافة الكارت إلى القائمة
+            sessionsContainer.appendChild(card);
+        });
+    } catch (error) {
+        console.error('❌ خطأ في جلب المحادثات:', error);
+    }
+}
+
+// --- إنشاء مجلد جديد ---
+function openCreateFolderModal() {
+    document.getElementById('folderModalOverlay').style.display = 'flex';
+    document.getElementById('folderInput').value = '';
+    document.getElementById('folderInput').focus();
+}
+function closeFolderModal() {
+    document.getElementById('folderModalOverlay').style.display = 'none';
+}
+async function createFolder() {
+    const name = document.getElementById('folderInput').value.trim();
+    if (!name) return;
+    try {
+        const response = await fetch('/api/folders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+        const data = await response.json();
+        if (data.success) {
+            closeFolderModal();
+            loadFolders();
+        }
+    } catch (error) {
+        console.error('خطأ:', error);
+    }
+}
+
+// --- إعادة تسمية مجلد ---
+function openFolderRenameModal(folderId, currentName) {
+    pendingAction = 'rename_folder';
+    pendingFolderId = folderId;
+    document.getElementById('modalTitle').innerText = 'تغيير اسم المجلد';
+    document.getElementById('modalMessage').style.display = 'none';
+    const input = document.getElementById('modalInput');
+    input.style.display = 'block';
+    input.value = currentName;
+    document.getElementById('modalConfirmBtn').className = 'modal-btn confirm';
+    document.getElementById('modalConfirmBtn').innerText = 'حفظ';
+    document.getElementById('modalOverlay').classList.add('show');
+    input.focus();
+    input.select();
+}
+
+// --- حذف مجلد ---
+function openFolderDeleteModal(folderId) {
+    pendingAction = 'delete_folder';
+    pendingFolderId = folderId;
+    document.getElementById('modalTitle').innerText = 'تأكيد حذف المجلد';
+    document.getElementById('modalMessage').style.display = 'block';
+    document.getElementById('modalMessage').innerText = 'هل أنت متأكد من حذف هذا المجلد؟ سيتم نقل محادثاته إلى "غير مصنف".';
+    document.getElementById('modalInput').style.display = 'none';
+    document.getElementById('modalConfirmBtn').className = 'modal-btn danger';
+    document.getElementById('modalConfirmBtn').innerText = 'نعم، احذف';
+    document.getElementById('modalOverlay').classList.add('show');
+}
+
+// --- نقل محادثة (مع إصلاحات) ---
+async function openMoveModal(conversationId) {
+    console.log(`⏳ فتح نافذة النقل للمحادثة ${conversationId}`);
+
+    moveConversationTargetId = conversationId;
+    const select = document.getElementById('moveFolderSelect');
+    const overlay = document.getElementById('moveModalOverlay');
+
+    if (!select || !overlay) {
+        console.error('❌ خطأ: لم يتم العثور على عناصر مودال النقل في الـ HTML!');
+        return;
+    }
+
+    select.innerHTML = '<option value="0">غير مصنف</option>';
+
+    try {
+        const res = await fetch('/api/folders');
+        const folders = await res.json();
+        folders.forEach(f => {
+            const opt = document.createElement('option');
+            opt.value = f.id;
+            opt.innerText = f.name;
+            select.appendChild(opt);
+        });
+        overlay.style.display = 'flex';
+    } catch (e) {
+        console.error('خطأ في تحميل المجلدات للنقل:', e);
+    }
+}
+function closeMoveModal() {
+    document.getElementById('moveModalOverlay').style.display = 'none';
+    moveConversationTargetId = null;
+}
+async function executeMove() {
+    if (!moveConversationTargetId) return;
+    const folderId = parseInt(document.getElementById('moveFolderSelect').value);
+    try {
+        const response = await fetch('/api/move_conversation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conversation_id: moveConversationTargetId, folder_id: folderId })
+        });
+        const data = await response.json();
+        if (data.success) {
+            closeMoveModal();
+            loadSessionsList(activeFolderId);
+            loadFolders();
+        }
+    } catch (error) { console.error('خطأ في النقل:', error); }
+}
+
+// ======================================================================
+// بقية الدوال (المودال الرئيسي والواجهة)
+// ======================================================================
 
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
@@ -50,57 +337,12 @@ async function initApp() {
             currentConversationId = data.id;
             await loadHistory(currentConversationId);
         } else {
-            await createNewChat();
+            await createNewChat(activeFolderId);
         }
-        await loadSessionsList();
+        await loadFolders();
+        await loadSessionsList(activeFolderId);
     } catch (error) {
         console.error('خطأ في التهيئة:', error);
-    }
-}
-
-async function createNewChat() {
-    try {
-        const response = await fetch('/api/new_session', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-        const data = await response.json();
-        if (data && data.id) {
-            currentConversationId = data.id;
-            const chatContainer = document.getElementById('chatBox');
-            if (chatContainer) chatContainer.innerHTML = '<div class="landing-greeting" id="landingGreeting"><h1>مرحبا، كيف يمكنني مساعدتك اليوم؟</h1></div>';
-            await loadSessionsList();
-            return true;
-        }
-        return false;
-    } catch (error) {
-        console.error('خطأ في إنشاء محادثة جديدة:', error);
-        return false;
-    }
-}
-
-async function loadSessionsList() {
-    try {
-        const response = await fetch('/api/sessions');
-        const sessions = await response.json();
-        const sessionsContainer = document.getElementById('conversationsList');
-        if (!sessionsContainer) return;
-        sessionsContainer.innerHTML = '';
-        sessions.forEach(session => {
-            const card = document.createElement('div');
-            card.classList.add('chat-item');
-            if (session.id === currentConversationId) card.classList.add('active');
-            card.innerHTML = `
-                <div class="chat-item-text" onclick="switchConversation(${session.id})">
-                    <h4>${escapeHTML(session.title)}</h4>
-                    <p>تفاعل حي ومستقر بالكامل</p>
-                </div>
-                <div class="chat-item-actions">
-                    <i class="fa-regular fa-pen-to-square action-btn" onclick="event.stopPropagation(); openRenameModal(${session.id}, '${escapeHTML(session.title)}')" title="تغيير الاسم"></i>
-                    <i class="fa-regular fa-trash-can action-btn" onclick="event.stopPropagation(); openDeleteModal(${session.id})" title="حذف المحادثة"></i>
-                </div>
-            `;
-            sessionsContainer.appendChild(card);
-        });
-    } catch (error) {
-        console.error('خطأ في جلب المحادثات:', error);
     }
 }
 
@@ -109,7 +351,7 @@ async function switchConversation(conversationId) {
     currentConversationId = conversationId;
     if (window.innerWidth <= 768) toggleSidebar();
     await loadHistory(conversationId);
-    await loadSessionsList();
+    await loadSessionsList(activeFolderId);
 }
 
 async function loadHistory(conversationId) {
@@ -164,10 +406,37 @@ function closeModal() {
     document.getElementById('modalOverlay').classList.remove('show');
     pendingAction = null;
     pendingConversationId = null;
+    pendingFolderId = null;
 }
 
 async function executeModalAction() {
-    if (!pendingAction || !pendingConversationId) return;
+    if (!pendingAction) return;
+
+    // معالجة إعادة تسمية المجلد
+    if (pendingAction === 'rename_folder') {
+        const newName = document.getElementById('modalInput').value.trim();
+        if (!newName) return closeModal();
+        try {
+            await fetch(`/api/folders/${pendingFolderId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newName }) });
+            closeModal();
+            loadFolders();
+        } catch (e) { console.error(e); }
+        return;
+    }
+
+    // معالجة حذف المجلد
+    if (pendingAction === 'delete_folder') {
+        try {
+            await fetch(`/api/folders/${pendingFolderId}`, { method: 'DELETE' });
+            closeModal();
+            if (activeFolderId === pendingFolderId) switchFolder(null);
+            else loadFolders();
+        } catch (e) { console.error(e); }
+        return;
+    }
+
+    // بقية الحالات (تغيير اسم المحادثة وحذف المحادثة)
+    if (!pendingConversationId) return;
     if (pendingAction === 'rename') {
         const newTitle = document.getElementById('modalInput').value.trim();
         if (!newTitle) {
@@ -189,7 +458,7 @@ async function performRename(conversationId, newTitle) {
         const response = await fetch(`/api/sessions/${conversationId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: newTitle }) });
         const data = await response.json();
         if (data.success) {
-            await loadSessionsList();
+            await loadSessionsList(activeFolderId);
             if (currentConversationId === conversationId) {
                 const titleElement = document.querySelector('.header-title h2');
                 if (titleElement) titleElement.innerText = newTitle;
@@ -208,7 +477,7 @@ async function performDelete(conversationId) {
                 const chatContainer = document.getElementById('chatBox');
                 if (chatContainer) chatContainer.innerHTML = '<div class="landing-greeting" id="landingGreeting"><h1>مرحبا، كيف يمكنني مساعدتك اليوم؟</h1></div>';
             }
-            await loadSessionsList();
+            await loadSessionsList(activeFolderId);
         }
     } catch (error) { console.error('حدث خطأ في الاتصال بالخادم.', error); }
 }
@@ -223,7 +492,7 @@ async function sendMessage() {
     if (greeting) greeting.remove();
 
     if (!currentConversationId) {
-        const success = await createNewChat();
+        const success = await createNewChat(activeFolderId);
         if (!success) {
             appendMessage('bot', '⚠️ تعذر بدء محادثة جديدة. يرجى الضغط على زر "محادثة جديدة" يدوياً.');
             return;
@@ -239,7 +508,7 @@ async function sendMessage() {
         const data = await response.json();
         if (typingIndicator) typingIndicator.remove();
         appendMessage('bot', data.response);
-        await loadSessionsList();
+        await loadSessionsList(activeFolderId);
     } catch (error) {
         if (typingIndicator) typingIndicator.remove();
         appendMessage('bot', '❌ فشل الاتصال بالخادم. تأكد من تشغيل الخادم.');
@@ -326,6 +595,44 @@ function setupModeSelectors() {
             else if (btn.id === 'voiceTool') { currentMode = 'general'; toggleVoiceRecording(); }
             else currentMode = 'general';
         });
+    });
+}
+
+function setupSearchFeature() {
+    const searchInput = document.getElementById('searchInput');
+    if (!searchInput) return;
+    let searchTimeout = null;
+    searchInput.addEventListener('input', function () {
+        clearTimeout(searchTimeout);
+        const query = this.value.toLowerCase().trim();
+        const items = document.querySelectorAll('.chat-item');
+        searchTimeout = setTimeout(() => {
+            let foundInTitle = false;
+            items.forEach(item => {
+                const title = item.querySelector('h4').innerText.toLowerCase();
+                if (title.includes(query)) {
+                    item.style.display = 'flex';
+                    foundInTitle = true;
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+            if (!foundInTitle && query.length >= 2) {
+                fetch(`/api/search_conversations?q=${encodeURIComponent(query)}`)
+                    .then(response => response.json())
+                    .then(results => {
+                        items.forEach(item => item.style.display = 'none');
+                        results.forEach(res => {
+                            items.forEach(item => {
+                                if (parseInt(item.dataset.conversationId) === res.id) {
+                                    item.style.display = 'flex';
+                                }
+                            });
+                        });
+                    })
+                    .catch(err => console.error('خطأ في البحث في المحتوى:', err));
+            }
+        }, 500);
     });
 }
 
