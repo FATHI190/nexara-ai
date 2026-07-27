@@ -7,7 +7,7 @@ import json
 import time
 import sqlite3
 import requests
-from flask import Flask, render_template, request, jsonify, g
+from flask import Flask, render_template, request, jsonify, g, Response
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 from deep_translator import GoogleTranslator
@@ -54,7 +54,6 @@ try:
     with app.app_context():
         db = get_db()
         if db:
-            # 1. إنشاء الجداول
             db.execute('''
                 CREATE TABLE IF NOT EXISTS conversations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,18 +80,14 @@ try:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-
-            # إصلاح أي خطأ في عمود folder_id (لن يؤذي إذا كان موجوداً)
             try:
                 cursor = db.execute("PRAGMA table_info(conversations)")
                 columns = [col[1] for col in cursor.fetchall()]
                 if 'folder_id' not in columns:
                     db.execute(
                         "ALTER TABLE conversations ADD COLUMN folder_id INTEGER DEFAULT 0")
-                    print("✅ تم إضافة عمود folder_id إلى جدول المحادثات.")
-            except Exception as e:
-                print(f"⚠️ خطأ أثناء التحقق من العمود: {e}")
-
+            except Exception:
+                pass
             db.commit()
             print("✅ قاعدة البيانات تعمل بشكل طبيعي.")
 except Exception as e:
@@ -288,30 +283,20 @@ def get_sessions():
         db = get_db()
         if db is None:
             return jsonify([])
-
         query = "SELECT id, title, created_at FROM conversations WHERE user_id = ?"
         params = [user_id]
-
         if folder_id is not None:
             try:
-                # تحويل القيمة إلى رقم صحيح لضمان عدم حدوث خطأ
                 folder_id_int = int(folder_id)
                 query += " AND folder_id = ?"
                 params.append(folder_id_int)
             except (ValueError, TypeError):
-                pass  # إذا كانت القيمة غير صالحة، نتجاهل التصفية
-
+                pass
         query += " ORDER BY id DESC"
-
         cur = db.execute(query, params)
         sessions = cur.fetchall()
-
-        # طباعة للتصحيح (تظهر في لوحة تحكم Render)
-        print(f"✅ تم جلب {len(sessions)} محادثة للمستخدم {user_id}")
-
         return jsonify([{'id': row['id'], 'title': row['title'], 'created_at': row['created_at']} for row in sessions])
-    except Exception as e:
-        print(f"❌ خطأ في جلب المحادثات: {e}")
+    except Exception:
         return jsonify([])
 
 
@@ -342,7 +327,6 @@ def new_session():
             default_title = "محادثة جديدة"
             data = request.get_json() or {}
             folder_id = data.get('folder_id', 0)
-
             cur = db.execute("INSERT INTO conversations (user_id, title, folder_id) VALUES (?, ?, ?)",
                              (user_id, default_title, folder_id))
             new_id = cur.lastrowid
@@ -423,6 +407,159 @@ def get_history():
     return jsonify([])
 
 
+@app.route('/api/search_conversations', methods=['GET'])
+def search_conversations():
+    try:
+        query = request.args.get('q', '').strip()
+        user_id = get_user_id()
+        db = get_db()
+        if db is None or len(query) < 2:
+            return jsonify([])
+        cur = db.execute("""
+            SELECT DISTINCT c.id, c.title 
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE c.user_id = ? AND m.content LIKE ?
+            ORDER BY c.id DESC
+            LIMIT 10
+        """, (user_id, f'%{query}%'))
+        results = cur.fetchall()
+        return jsonify([{'id': row['id'], 'title': row['title']} for row in results])
+    except Exception:
+        return jsonify([])
+
+# 🔥 مسار تصدير المحادثة كملف نصي
+
+
+@app.route('/api/export/<int:session_id>', methods=['GET'])
+def export_chat(session_id):
+    try:
+        user_id = get_user_id()
+        db = get_db()
+        if db is None:
+            return Response("خطأ في قاعدة البيانات", status=500)
+
+        # التحقق من وجود المحادثة
+        cur = db.execute(
+            "SELECT title FROM conversations WHERE id = ? AND user_id = ?", (session_id, user_id))
+        conv = cur.fetchone()
+        if not conv:
+            return Response("المحادثة غير موجودة", status=404)
+
+        # جلب الرسائل
+        cur = db.execute(
+            "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id ASC", (session_id,))
+        messages = cur.fetchall()
+
+        # إنشاء محتوى الملف النصي
+        content = f"--- تصدير المحادثة: {conv['title']} ---\n"
+        content += f"التاريخ: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        content += "="*40 + "\n\n"
+
+        for msg in messages:
+            role_label = "أنت" if msg['role'] == 'user' else "Nexara"
+            content += f"{role_label}:\n{msg['content']}\n\n"
+
+        content += "="*40 + "\n"
+        content += "نهاية التصدير"
+
+        # إرجاع الملف للتنزيل
+        response = Response(content, mimetype='text/plain')
+        response.headers[
+            'Content-Disposition'] = f'attachment; filename=nexara_chat_{session_id}.txt'
+        return response
+    except Exception as e:
+        return Response(f"خطأ في التصدير: {str(e)}", status=500)
+
+# ======================================================================
+# 🔥 معالج الأوامر (Command Handler) - الإصدار المحسن
+# ======================================================================
+
+
+def process_command(user_input, conv_id, user_id, db):
+    # 🔥 تنظيف المدخلات: إزالة المسافات الزائدة والشرطات المائلة الزائدة في النهاية
+    clean_input = user_input.strip().rstrip('/')
+    parts = clean_input.split(' ', 1)
+    cmd = parts[0].lower()
+
+    # الأمر /help
+    if cmd == '/help':
+        return (
+            "📖 **قائمة أوامر Nexara:**\n\n"
+            "`/help` - عرض قائمة الأوامر.\n"
+            "`/rename [اسم جديد]` - تغيير عنوان المحادثة الحالية.\n"
+            "`/delete` - حذف المحادثة الحالية بالكامل.\n"
+            "`/export` - تصدير المحادثة الحالية كملف نصي (سيتم تنزيله).\n"
+            "`/folder [اسم المجلد]` - إنشاء مجلد جديد.\n"
+            "`/move [اسم المجلد]` - نقل المحادثة الحالية إلى مجلد (يتم إنشاؤه إذا لم يكن موجوداً).\n\n"
+            "*نصيحة: يمكنك استخدام هذه الأوامر مباشرة في مربع الدردشة دون وضع شرطة مائلة في النهاية.*"
+        )
+
+    # الأمر /rename
+    if cmd == '/rename' and len(parts) > 1:
+        new_title = parts[1].strip()
+        if not new_title:
+            return "❌ خطأ: يجب كتابة اسم جديد بعد الأمر. مثال: `/rename مشروعي الجديد`"
+        db.execute("UPDATE conversations SET title = ? WHERE id = ?",
+                   (new_title, conv_id))
+        db.commit()
+        return f"✅ تم إعادة تسمية المحادثة إلى: **{new_title}**"
+
+    # الأمر /delete
+    if cmd == '/delete':
+        db.execute("DELETE FROM messages WHERE conversation_id = ?", (conv_id,))
+        db.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
+        db.commit()
+        return "🗑️ ✅ تم حذف المحادثة الحالية بنجاح. (ستقوم الصفحة بتحديث القائمة تلقائياً)"
+
+    # الأمر /export
+    if cmd == '/export':
+        export_url = f"/api/export/{conv_id}"
+        return f"📂 **رابط تصدير المحادثة:** [اضغط هنا لتنزيل ملف نصي]({export_url})"
+
+    # الأمر /folder
+    if cmd == '/folder' and len(parts) > 1:
+        folder_name = parts[1].strip()
+        if not folder_name:
+            return "❌ خطأ: يجب كتابة اسم المجلد. مثال: `/folder دروس`"
+
+        cur = db.execute(
+            "SELECT id FROM folders WHERE user_id = ? AND name = ?", (user_id, folder_name))
+        existing = cur.fetchone()
+        if existing:
+            return f"⚠️ المجلد `{folder_name}` موجود بالفعل."
+
+        cur = db.execute(
+            "INSERT INTO folders (user_id, name) VALUES (?, ?)", (user_id, folder_name))
+        db.commit()
+        return f"📁 ✅ تم إنشاء مجلد جديد: **{folder_name}**"
+
+    # الأمر /move
+    if cmd == '/move' and len(parts) > 1:
+        folder_name = parts[1].strip()
+        if not folder_name:
+            return "❌ خطأ: يجب كتابة اسم المجلد. مثال: `/move دروس`"
+
+        cur = db.execute(
+            "SELECT id FROM folders WHERE user_id = ? AND name = ?", (user_id, folder_name))
+        existing = cur.fetchone()
+        if existing:
+            folder_id = existing['id']
+        else:
+            cur = db.execute(
+                "INSERT INTO folders (user_id, name) VALUES (?, ?)", (user_id, folder_name))
+            folder_id = cur.lastrowid
+            db.commit()
+
+        db.execute(
+            "UPDATE conversations SET folder_id = ? WHERE id = ?", (folder_id, conv_id))
+        db.commit()
+        return f"📦 ✅ تم نقل المحادثة إلى مجلد: **{folder_name}**"
+
+    # إذا كتب أمراً غير معروف
+    return f"⚠️ أمر غير معروف: `{cmd}`. اكتب `/help` لعرض قائمة الأوامر المتاحة."
+
+
 def translate_text(text):
     if not text or not translator:
         return text
@@ -474,108 +611,119 @@ def predict():
 
         final_response = ""
 
-        if mode == 'web':
-            try:
-                search_success = False
-                final_response = ""
-                translated_query = translate_text(user_input)
-                clean_eng_query = re.sub(
-                    r'[^\w\s]', '', translated_query).strip()
-                if not clean_eng_query:
-                    clean_eng_query = user_input
-
+        # 🔥 1. التحقق مما إذا كان الإدخال أمراً
+        if user_input.startswith('/'):
+            final_response = process_command(
+                user_input, conv_id, get_user_id(), db)
+        else:
+            # 2. إذا لم يكن أمراً، نتابع المعالجة العادية
+            if mode == 'web':
                 try:
-                    with ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(lambda: requests.get(
-                            f"https://api.duckduckgo.com/?q={clean_eng_query}&format=json&no_html=1&skip_disambig=1",
-                            timeout=2
-                        ))
-                        response = future.result(timeout=1.5)
-                        if response.status_code == 200:
-                            data_ddg = response.json()
-                            abstract = data_ddg.get('AbstractText', '')
-                            if abstract and len(abstract) > 20:
-                                clean_ddg = re.sub(r'[*\[\]=#]', '', abstract)
-                                final_response = translate_text(clean_ddg)
-                                search_success = True
-                except (TimeoutError, Exception):
-                    pass
+                    search_success = False
+                    final_response = ""
+                    translated_query = translate_text(user_input)
+                    clean_eng_query = re.sub(
+                        r'[^\w\s]', '', translated_query).strip()
+                    if not clean_eng_query:
+                        clean_eng_query = user_input
 
-                if not search_success:
                     try:
-                        headers = {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-                        wiki_url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro&explaintext&titles={clean_eng_query}&format=json&redirects=1"
-                        response_wiki = requests.get(
-                            wiki_url, headers=headers, timeout=3)
-                        data_wiki = response_wiki.json()
-                        pages = data_wiki.get('query', {}).get('pages', {})
-                        for page_id, page_info in pages.items():
-                            if page_id != '-1' and 'extract' in page_info:
-                                extract = page_info['extract']
-                                if extract and len(extract) > 30:
-                                    clean_text = re.sub(
-                                        r'[*\[\]=#]', '', extract)
-                                    final_response = translate_text(clean_text)
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(lambda: requests.get(
+                                f"https://api.duckduckgo.com/?q={clean_eng_query}&format=json&no_html=1&skip_disambig=1",
+                                timeout=2
+                            ))
+                            response = future.result(timeout=1.5)
+                            if response.status_code == 200:
+                                data_ddg = response.json()
+                                abstract = data_ddg.get('AbstractText', '')
+                                if abstract and len(abstract) > 20:
+                                    clean_ddg = re.sub(
+                                        r'[*\[\]=#]', '', abstract)
+                                    final_response = translate_text(clean_ddg)
                                     search_success = True
-                                    break
-                    except Exception:
+                    except (TimeoutError, Exception):
                         pass
 
-                if not search_success:
-                    final_response = "لم يعثر البحث على أي نتائج. تأكد من أن الخادم متصل بالإنترنت أو حاول لاحقاً."
+                    if not search_success:
+                        try:
+                            headers = {
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                            wiki_url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro&explaintext&titles={clean_eng_query}&format=json&redirects=1"
+                            response_wiki = requests.get(
+                                wiki_url, headers=headers, timeout=3)
+                            data_wiki = response_wiki.json()
+                            pages = data_wiki.get('query', {}).get('pages', {})
+                            for page_id, page_info in pages.items():
+                                if page_id != '-1' and 'extract' in page_info:
+                                    extract = page_info['extract']
+                                    if extract and len(extract) > 30:
+                                        clean_text = re.sub(
+                                            r'[*\[\]=#]', '', extract)
+                                        final_response = translate_text(
+                                            clean_text)
+                                        search_success = True
+                                        break
+                        except Exception:
+                            pass
 
-            except Exception as e:
-                final_response = f"حدث خطأ أثناء البحث. {str(e)}"
+                    if not search_success:
+                        final_response = "لم يعثر البحث على أي نتائج. تأكد من أن الخادم متصل بالإنترنت أو حاول لاحقاً."
 
-        elif mode == 'code':
-            final_response = "تم توليد الكود."
+                except Exception as e:
+                    final_response = f"حدث خطأ أثناء البحث. {str(e)}"
 
-        else:
-            math_match = re.search(r'(\d+)\s*([\+\-\*/])\s*(\d+)', user_input)
-            if math_match:
-                n1, op, n2 = float(math_match.group(1)), math_match.group(
-                    2), float(math_match.group(3))
-                if op == '/':
-                    if n2 == 0:
-                        final_response = '❌ لا يمكن القسمة على صفر!'
-                    else:
-                        scale_m = n1 * n2
+            elif mode == 'code':
+                final_response = "تم توليد الكود."
+
+            else:
+                math_match = re.search(
+                    r'(\d+)\s*([\+\-\*/])\s*(\d+)', user_input)
+                if math_match:
+                    n1, op, n2 = float(math_match.group(1)), math_match.group(
+                        2), float(math_match.group(3))
+                    if op == '/':
+                        if n2 == 0:
+                            final_response = '❌ لا يمكن القسمة على صفر!'
+                        else:
+                            scale_m = n1 * n2
+                            n1_s, n2_s = n1 / \
+                                math.sqrt(scale_m), n2 / math.sqrt(scale_m)
+                            ans = ((n1_s * n2_s) * w_d + b_d) * (n1 / n2)
+                            final_output = int(round(ans)) if round(
+                                ans, 4).is_integer() else round(ans, 4)
+                            final_response = f"النتيجة الرياضية: {final_output}"
+                    elif op == '*':
+                        scale = n1 * n2
                         n1_s, n2_s = n1 / \
-                            math.sqrt(scale_m), n2 / math.sqrt(scale_m)
-                        ans = ((n1_s * n2_s) * w_d + b_d) * (n1 / n2)
+                            math.sqrt(scale), n2 / math.sqrt(scale)
+                        ans = ((n1_s * n2_s) * w_mu + b_mu) * scale
                         final_output = int(round(ans)) if round(
                             ans, 4).is_integer() else round(ans, 4)
                         final_response = f"النتيجة الرياضية: {final_output}"
-                elif op == '*':
-                    scale = n1 * n2
-                    n1_s, n2_s = n1 / math.sqrt(scale), n2 / math.sqrt(scale)
-                    ans = ((n1_s * n2_s) * w_mu + b_mu) * scale
-                    final_output = int(round(ans)) if round(
-                        ans, 4).is_integer() else round(ans, 4)
-                    final_response = f"النتيجة الرياضية: {final_output}"
-                else:
-                    scale = (n1 + n2 if (n1 + n2) != 0 else 1)
-                    n1_s, n2_s = n1 / scale, n2 / scale
-                    if op == '+':
-                        ans = ((n1_s * w_p1) + (n2_s * w_p2) + b_p) * scale
-                    elif op == '-':
-                        ans = ((n1_s * w_m1) + (n2_s * w_m2) + b_m) * scale
-                    final_output = int(round(ans)) if round(
-                        ans, 4).is_integer() else round(ans, 4)
-                    final_response = f"النتيجة الرياضية: {final_output}"
-            else:
-                nums = [float(x) for x in re.findall(r'\d+\.?\d*', user_input)]
-                if len(nums) >= 2 and any(x in user_input for x in ['طقس', 'جو', 'دراسة', 'مذاكرة', 'لعب']):
-                    if any(x in user_input for x in ['طقس', 'جو']):
-                        score = nums[0]*w_t + nums[1]*w_h + b_w
-                        decision = "🏞️ مناسب للخروج!" if score > 0 else "🏠 ابق في المنزل."
                     else:
-                        score = nums[0]*w_ex + nums[1]*w_hr + b_s
-                        decision = "🎮 يمكنك اللعب!" if score > 0 else "📚 افتح الكتب فوراً."
-                    final_response = f"القرار: {decision}"
+                        scale = (n1 + n2 if (n1 + n2) != 0 else 1)
+                        n1_s, n2_s = n1 / scale, n2 / scale
+                        if op == '+':
+                            ans = ((n1_s * w_p1) + (n2_s * w_p2) + b_p) * scale
+                        elif op == '-':
+                            ans = ((n1_s * w_m1) + (n2_s * w_m2) + b_m) * scale
+                        final_output = int(round(ans)) if round(
+                            ans, 4).is_integer() else round(ans, 4)
+                        final_response = f"النتيجة الرياضية: {final_output}"
                 else:
-                    final_response = user_input
+                    nums = [float(x)
+                            for x in re.findall(r'\d+\.?\d*', user_input)]
+                    if len(nums) >= 2 and any(x in user_input for x in ['طقس', 'جو', 'دراسة', 'مذاكرة', 'لعب']):
+                        if any(x in user_input for x in ['طقس', 'جو']):
+                            score = nums[0]*w_t + nums[1]*w_h + b_w
+                            decision = "🏞️ مناسب للخروج!" if score > 0 else "🏠 ابق في المنزل."
+                        else:
+                            score = nums[0]*w_ex + nums[1]*w_hr + b_s
+                            decision = "🎮 يمكنك اللعب!" if score > 0 else "📚 افتح الكتب فوراً."
+                        final_response = f"القرار: {decision}"
+                    else:
+                        final_response = user_input
 
         if is_memory_mode:
             temp_sessions[conv_id]['messages'].append(
