@@ -123,9 +123,22 @@
         }
 
         .recent-chats {
+            /* أكوادك القديمة هنا */
             flex: 1;
             overflow-y: auto;
             margin-bottom: 10px;
+
+            /* 🔥 أضف هذين السطرين لإخفاء شريط التمرير */
+            scrollbar-width: none;
+            /* لمتصفحات Firefox */
+            -ms-overflow-style: none;
+            /* لـ IE و Edge */
+
+        }
+
+        .recent-chats::-webkit-scrollbar {
+            display: none;
+            /* لمتصفحات Chrome و Safari */
         }
 
         .section-title {
@@ -729,4 +742,93 @@
             .landing-greeting h1 {
                 font-size: 22px;
             }
+        }
+
+        /* 🔥 تنسيق قسم المجلدات الجديد */
+        .folders-section {
+            margin-bottom: 15px;
+            padding: 0 5px;
+        }
+
+        .folders-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .folders-actions i {
+            cursor: pointer;
+            color: var(--primary-teal);
+            font-size: 14px;
+            padding: 4px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .folders-actions i:hover {
+            background: rgba(14, 210, 190, 0.1);
+        }
+
+        .folders-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        /* 🔥 تنسيق زر المجلد (أكثر أناقة واحترافية) */
+        .folder-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 13px;
+            color: var(--text-dark);
+            background: transparent;
+        }
+
+        .folder-item:hover {
+            background: rgba(0, 0, 0, 0.05);
+        }
+
+        .folder-item.active {
+            background: var(--bubble-user);
+            font-weight: bold;
+            color: var(--text-dark);
+        }
+
+        .folder-item .folder-name {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .folder-item .folder-controls {
+            display: flex;
+            gap: 4px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .folder-item:hover .folder-controls {
+            opacity: 1;
+        }
+
+        .folder-item .folder-controls i {
+            color: var(--text-gray);
+            font-size: 11px;
+            padding: 4px;
+            border-radius: 50%;
+            transition: 0.2s;
+        }
+
+        .folder-item .folder-controls i:hover {
+            color: var(--primary-teal);
+            background: rgba(0, 0, 0, 0.05);
         }
