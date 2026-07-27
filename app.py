@@ -48,18 +48,20 @@ def close_connection(exception):
 
 
 # ======================================================================
-# 🔥 تم نقل تهيئة قاعدة البيانات إلى هنا لتعمل مع Gunicorn على Render
+# 🔥 تهيئة قاعدة البيانات
 # ======================================================================
 try:
     with app.app_context():
         db = get_db()
         if db:
+            # 1. إنشاء الجداول
             db.execute('''
                 CREATE TABLE IF NOT EXISTS conversations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id TEXT NOT NULL,
                     title TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    folder_id INTEGER DEFAULT 0
                 )
             ''')
             db.execute('''
@@ -71,15 +73,36 @@ try:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS folders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            # إصلاح أي خطأ في عمود folder_id (لن يؤذي إذا كان موجوداً)
+            try:
+                cursor = db.execute("PRAGMA table_info(conversations)")
+                columns = [col[1] for col in cursor.fetchall()]
+                if 'folder_id' not in columns:
+                    db.execute(
+                        "ALTER TABLE conversations ADD COLUMN folder_id INTEGER DEFAULT 0")
+                    print("✅ تم إضافة عمود folder_id إلى جدول المحادثات.")
+            except Exception as e:
+                print(f"⚠️ خطأ أثناء التحقق من العمود: {e}")
+
             db.commit()
             print("✅ قاعدة البيانات تعمل بشكل طبيعي.")
 except Exception as e:
     print(f"⚠️ قاعدة البيانات لم تعمل! لكن الخادم سيعمل بوضعية (الذاكرة المؤقتة).")
 
-
 # ======================================================================
 # دوال الذكاء الاصطناعي والرياضيات
 # ======================================================================
+
+
 def generate_math_data(op):
     X, Y = [], []
     for _ in range(500):
@@ -163,19 +186,132 @@ else:
 def home():
     return render_template('index.html')
 
+# ======================================================================
+# مسارات المحادثات والمجلدات
+# ======================================================================
 
-@app.route('/api/sessions', methods=['GET'])
-def get_sessions():
+
+@app.route('/api/folders', methods=['GET'])
+def get_folders():
     try:
         user_id = get_user_id()
         db = get_db()
         if db is None:
             return jsonify([])
         cur = db.execute(
-            "SELECT id, title, created_at FROM conversations WHERE user_id = ? ORDER BY id DESC", (user_id,))
-        sessions = cur.fetchall()
-        return jsonify([{'id': row['id'], 'title': row['title'], 'created_at': row['created_at']} for row in sessions])
+            "SELECT id, name FROM folders WHERE user_id = ? ORDER BY created_at ASC", (user_id,))
+        folders = cur.fetchall()
+        return jsonify([{'id': row['id'], 'name': row['name']} for row in folders])
     except Exception:
+        return jsonify([])
+
+
+@app.route('/api/folders', methods=['POST'])
+def create_folder():
+    try:
+        data = request.get_json() or {}
+        name = data.get('name', '').strip()
+        if not name:
+            return jsonify({'success': False, 'error': 'اسم المجلد لا يمكن أن يكون فارغاً'}), 400
+        user_id = get_user_id()
+        db = get_db()
+        if db is None:
+            return jsonify({'success': False, 'error': 'خطأ في قاعدة البيانات'}), 500
+        cur = db.execute(
+            "INSERT INTO folders (user_id, name) VALUES (?, ?)", (user_id, name))
+        folder_id = cur.lastrowid
+        db.commit()
+        return jsonify({'success': True, 'id': folder_id, 'name': name})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/folders/<int:folder_id>', methods=['DELETE'])
+def delete_folder(folder_id):
+    try:
+        user_id = get_user_id()
+        db = get_db()
+        if db is None:
+            return jsonify({'success': False, 'error': 'Database error'}), 500
+        db.execute(
+            "UPDATE conversations SET folder_id = 0 WHERE folder_id = ? AND user_id = ?", (folder_id, user_id))
+        db.execute("DELETE FROM folders WHERE id = ? AND user_id = ?",
+                   (folder_id, user_id))
+        db.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/folders/<int:folder_id>', methods=['PUT'])
+def rename_folder(folder_id):
+    try:
+        data = request.get_json() or {}
+        new_name = data.get('name', '').strip()
+        if not new_name:
+            return jsonify({'success': False, 'error': 'الاسم لا يمكن أن يكون فارغاً'}), 400
+        user_id = get_user_id()
+        db = get_db()
+        if db is None:
+            return jsonify({'success': False}), 500
+        db.execute("UPDATE folders SET name = ? WHERE id = ? AND user_id = ?",
+                   (new_name, folder_id, user_id))
+        db.commit()
+        return jsonify({'success': True, 'name': new_name})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/move_conversation', methods=['POST'])
+def move_conversation():
+    try:
+        data = request.get_json() or {}
+        conv_id = data.get('conversation_id')
+        folder_id = data.get('folder_id', 0)
+        user_id = get_user_id()
+        db = get_db()
+        if db is None:
+            return jsonify({'success': False}), 500
+        db.execute("UPDATE conversations SET folder_id = ? WHERE id = ? AND user_id = ?",
+                   (folder_id, conv_id, user_id))
+        db.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/sessions', methods=['GET'])
+def get_sessions():
+    try:
+        folder_id = request.args.get('folder_id', None)
+        user_id = get_user_id()
+        db = get_db()
+        if db is None:
+            return jsonify([])
+
+        query = "SELECT id, title, created_at FROM conversations WHERE user_id = ?"
+        params = [user_id]
+
+        if folder_id is not None:
+            try:
+                # تحويل القيمة إلى رقم صحيح لضمان عدم حدوث خطأ
+                folder_id_int = int(folder_id)
+                query += " AND folder_id = ?"
+                params.append(folder_id_int)
+            except (ValueError, TypeError):
+                pass  # إذا كانت القيمة غير صالحة، نتجاهل التصفية
+
+        query += " ORDER BY id DESC"
+
+        cur = db.execute(query, params)
+        sessions = cur.fetchall()
+
+        # طباعة للتصحيح (تظهر في لوحة تحكم Render)
+        print(f"✅ تم جلب {len(sessions)} محادثة للمستخدم {user_id}")
+
+        return jsonify([{'id': row['id'], 'title': row['title'], 'created_at': row['created_at']} for row in sessions])
+    except Exception as e:
+        print(f"❌ خطأ في جلب المحادثات: {e}")
         return jsonify([])
 
 
@@ -204,8 +340,11 @@ def new_session():
         db = get_db()
         if db is not None:
             default_title = "محادثة جديدة"
-            cur = db.execute(
-                "INSERT INTO conversations (user_id, title) VALUES (?, ?)", (user_id, default_title))
+            data = request.get_json() or {}
+            folder_id = data.get('folder_id', 0)
+
+            cur = db.execute("INSERT INTO conversations (user_id, title, folder_id) VALUES (?, ?, ?)",
+                             (user_id, default_title, folder_id))
             new_id = cur.lastrowid
             db.commit()
             return jsonify({'id': new_id, 'title': default_title})
@@ -345,7 +484,6 @@ def predict():
                 if not clean_eng_query:
                     clean_eng_query = user_input
 
-                # 1. محاولة بحث DuckDuckGo سريعة جداً (مهلة 1.5 ثانية)
                 try:
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         future = executor.submit(lambda: requests.get(
@@ -363,7 +501,6 @@ def predict():
                 except (TimeoutError, Exception):
                     pass
 
-                # 2. إذا فشل DuckDuckGo، حاول Wikipedia
                 if not search_success:
                     try:
                         headers = {
@@ -385,7 +522,6 @@ def predict():
                     except Exception:
                         pass
 
-                # 3. إذا فشل الكل
                 if not search_success:
                     final_response = "لم يعثر البحث على أي نتائج. تأكد من أن الخادم متصل بالإنترنت أو حاول لاحقاً."
 
@@ -466,7 +602,6 @@ def get_user_id():
 
 
 if __name__ == '__main__':
-    # لم نعد بحاجة لتهيئة قاعدة البيانات هنا لأنها نُقلت للأعلى
     import os
     port = int(os.environ.get('PORT', 5001))
     app.run(host='0.0.0.0', port=port)
