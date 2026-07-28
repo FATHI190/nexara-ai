@@ -9,6 +9,7 @@ import sqlite3
 import requests
 from flask import Flask, render_template, request, jsonify, g, Response
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from werkzeug.utils import secure_filename
 
 try:
     from deep_translator import GoogleTranslator
@@ -22,6 +23,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE = os.path.join(BASE_DIR, 'chat.db')
 USER_FILE = os.path.join(BASE_DIR, 'user.txt')
 WEIGHTS_FILE = os.path.join(BASE_DIR, "nexara_weights.json")
+
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
+
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
 
 temp_sessions = {}
 temp_id_counter = 1000
@@ -77,6 +85,16 @@ try:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id INTEGER NOT NULL,
+                    user_id TEXT NOT NULL,
+                    feedback_type TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(message_id, user_id)
+                )
+            ''')
             try:
                 cursor = db.execute("PRAGMA table_info(conversations)")
                 columns = [col[1] for col in cursor.fetchall()]
@@ -91,7 +109,7 @@ except Exception as e:
     print(f"⚠️ قاعدة البيانات لم تعمل! لكن الخادم سيعمل بوضعية (الذاكرة المؤقتة).")
 
 # ======================================================================
-# دوال الذكاء الاصطناعي والرياضيات
+# دوال الذكاء الاصطناعي والرياضيات (النموذج الأصلي - معدل لتحمل الأخطاء)
 # ======================================================================
 
 
@@ -141,21 +159,26 @@ def save_weights(weights_dict):
 
 def load_weights():
     if os.path.exists(WEIGHTS_FILE):
-        with open(WEIGHTS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(WEIGHTS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return None
     return None
 
 
+# 🔥 إصلاح تحميل الأوزان (إذا كان الملف قديماً، سيقوم تلقائياً بالتدريب من جديد)
 weights = load_weights()
-if weights:
+if weights and all(k in weights for k in ['plus', 'minus', 'multiply', 'divide', 'weather', 'study']):
     w_p1, w_p2, b_p = weights['plus']
     w_m1, w_m2, b_m = weights['minus']
     w_mu, b_mu = weights['multiply']
     w_d, b_d = weights['divide']
     w_t, w_h, b_w = weights['weather']
     w_ex, w_hr, b_s = weights['study']
+    print("✅ تم تحميل أوزان Nexara بنجاح.")
 else:
-    print("🔮 جاري تدريب نموذج Nexara من البداية...")
+    print("🔮 ملف الأوزان قديم أو غير موجود. جاري تدريب نموذج Nexara من البداية...")
     X_p, Y_p = generate_math_data('+')
     w_p1, w_p2, b_p = train_brain(X_p, Y_p, epochs=1000)
     X_m, Y_m = generate_math_data('-')
@@ -395,9 +418,9 @@ def get_history():
         db = get_db()
         if db is not None:
             cur = db.execute(
-                "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id ASC", (conv_id,))
+                "SELECT id, role, content FROM messages WHERE conversation_id = ? ORDER BY id ASC", (conv_id,))
             messages = cur.fetchall()
-            return jsonify([{'role': row['role'], 'content': row['content']} for row in messages])
+            return jsonify([{'id': row['id'], 'role': row['role'], 'content': row['content']} for row in messages])
     except Exception:
         pass
     if conv_id in temp_sessions:
@@ -545,6 +568,8 @@ def predict():
             return jsonify({'response': '❌ Please write a message first.'})
         db = get_db()
         is_memory_mode = False
+        message_id = None
+
         if conv_id in temp_sessions:
             is_memory_mode = True
             temp_sessions[conv_id]['messages'].append(
@@ -567,9 +592,10 @@ def predict():
                     db.execute(
                         "UPDATE conversations SET title = ? WHERE id = ?", (new_title, conv_id))
                     db.commit()
-                db.execute("INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)",
-                           (conv_id, 'user', user_input))
+                cur = db.execute(
+                    "INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)", (conv_id, 'user', user_input))
                 db.commit()
+
         final_response = ""
         if user_input.startswith('/'):
             final_response = process_command(
@@ -700,16 +726,215 @@ def predict():
                         final_response = f"Decision: {decision}"
                     else:
                         final_response = user_input
+
         if is_memory_mode:
             temp_sessions[conv_id]['messages'].append(
                 {'role': 'bot', 'content': final_response})
         else:
-            db.execute("INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)",
-                       (conv_id, 'bot', final_response))
+            cur = db.execute(
+                "INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)", (conv_id, 'bot', final_response))
+            message_id = cur.lastrowid
             db.commit()
-        return jsonify({'response': final_response})
+        return jsonify({'response': final_response, 'message_id': message_id})
     except Exception as e:
         return jsonify({'response': f"❌ Technical error: {str(e)}"})
+
+
+@app.route('/api/feedback', methods=['POST'])
+def submit_feedback():
+    try:
+        data = request.get_json() or {}
+        message_id = data.get('message_id')
+        feedback_type = data.get('type')
+        if not message_id or not feedback_type:
+            return jsonify({'success': False, 'error': 'Missing data'}), 400
+        if feedback_type not in ['like', 'dislike']:
+            return jsonify({'success': False, 'error': 'Invalid feedback type'}), 400
+        user_id = get_user_id()
+        db = get_db()
+        if db is None:
+            return jsonify({'success': False, 'error': 'Database error'}), 500
+        cur = db.execute("SELECT id FROM messages WHERE id = ?", (message_id,))
+        if not cur.fetchone():
+            return jsonify({'success': False, 'error': 'Message not found'}), 404
+        cur = db.execute("""
+            INSERT INTO feedback (message_id, user_id, feedback_type) 
+            VALUES (?, ?, ?) 
+            ON CONFLICT(message_id, user_id) DO UPDATE SET feedback_type = ?
+        """, (message_id, user_id, feedback_type, feedback_type))
+        db.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'error': 'No file provided'}), 400
+        file = request.files['file']
+        conv_id = request.form.get('conversation_id')
+        ui_lang = request.form.get('lang', 'en')
+        mode = request.form.get('mode', 'general')
+        search_mode = request.form.get('search_mode', 'web')
+
+        if file.filename == '':
+            return jsonify({'success': False, 'error': 'No file selected'}), 400
+
+        filename = secure_filename(file.filename)
+        ext = filename.rsplit('.', 1)[1].lower(
+        ) if '.' in filename else 'unknown'
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+
+        is_binary = False
+        file_content = ""
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                file_content = f.read()
+        except UnicodeDecodeError:
+            is_binary = True
+            file_content = None
+        except Exception:
+            is_binary = True
+            file_content = None
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+
+        user_id = get_user_id()
+        db = get_db()
+        is_memory_mode = False
+        message_id = None
+
+        user_display_msg = f"📎 [{filename}]"
+        if is_binary or not file_content:
+            bot_context = f"📄 **File uploaded: {filename}**\n\n(File type: {ext}. This is a binary file and cannot be read as text by the AI.)"
+        else:
+            bot_context = f"📄 **Analyze this file content ({filename}):**\n\n```{ext}\n{file_content}\n```"
+
+        if conv_id and conv_id in temp_sessions:
+            is_memory_mode = True
+            temp_sessions[conv_id]['messages'].append(
+                {'role': 'user', 'content': user_display_msg})
+        else:
+            if db is None:
+                global temp_id_counter
+                temp_id_counter += 1
+                conv_id = temp_id_counter
+                is_memory_mode = True
+                temp_sessions[conv_id] = {"title": f"File: {filename}", "messages": [
+                    {'role': 'user', 'content': user_display_msg}]}
+            else:
+                cur = db.execute(
+                    "SELECT title FROM conversations WHERE id = ?", (conv_id,))
+                conv = cur.fetchone()
+                if conv and conv['title'] in ["محادثة جديدة", "New Chat"]:
+                    db.execute(
+                        "UPDATE conversations SET title = ? WHERE id = ?", (f"File: {filename}", conv_id))
+                    db.commit()
+                cur = db.execute(
+                    "INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)", (conv_id, 'user', user_display_msg))
+                db.commit()
+
+        final_response = get_bot_response(
+            bot_context, mode, ui_lang, search_mode)
+        if is_memory_mode:
+            temp_sessions[conv_id]['messages'].append(
+                {'role': 'bot', 'content': final_response})
+        else:
+            cur = db.execute(
+                "INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)", (conv_id, 'bot', final_response))
+            message_id = cur.lastrowid
+            db.commit()
+
+        return jsonify({'success': True, 'response': final_response, 'conversation_id': conv_id, 'message_id': message_id})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ======================================================================
+# دوال مساعدة
+# ======================================================================
+
+
+def get_bot_response(user_input, mode, ui_lang, search_mode):
+    if mode == 'web':
+        try:
+            search_success = False
+            final_response = ""
+            try:
+                if GoogleTranslator:
+                    translator_query = GoogleTranslator(
+                        source='auto', target='en')
+                    translated_query = translator_query.translate(user_input)
+                else:
+                    translated_query = user_input
+            except:
+                translated_query = user_input
+            clean_eng_query = re.sub(r'[^\w\s]', '', translated_query).strip()
+            if not clean_eng_query:
+                clean_eng_query = user_input
+            try:
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(lambda: requests.get(
+                        f"https://api.duckduckgo.com/?q={clean_eng_query}&format=json&no_html=1&skip_disambig=1", timeout=2))
+                    response = future.result(timeout=1.5)
+                    if response.status_code == 200:
+                        data_ddg = response.json()
+                        abstract = data_ddg.get('AbstractText', '')
+                        if abstract and len(abstract) > 20:
+                            clean_ddg = re.sub(r'[*\[\]=#]', '', abstract)
+                            try:
+                                if GoogleTranslator:
+                                    translator_web = GoogleTranslator(
+                                        source='auto', target=ui_lang)
+                                    final_response = translator_web.translate(
+                                        clean_ddg)
+                                else:
+                                    final_response = clean_ddg
+                            except:
+                                final_response = clean_ddg
+                            search_success = True
+            except (TimeoutError, Exception):
+                pass
+            if not search_success:
+                try:
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                    wiki_url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro&explaintext&titles={clean_eng_query}&format=json&redirects=1"
+                    response_wiki = requests.get(
+                        wiki_url, headers=headers, timeout=3)
+                    data_wiki = response_wiki.json()
+                    pages = data_wiki.get('query', {}).get('pages', {})
+                    for page_id, page_info in pages.items():
+                        if page_id != '-1' and 'extract' in page_info:
+                            extract = page_info['extract']
+                            if extract and len(extract) > 30:
+                                clean_text = re.sub(r'[*\[\]=#]', '', extract)
+                                try:
+                                    if GoogleTranslator:
+                                        translator_web = GoogleTranslator(
+                                            source='auto', target=ui_lang)
+                                        final_response = translator_web.translate(
+                                            clean_text)
+                                    else:
+                                        final_response = clean_text
+                                except:
+                                    final_response = clean_text
+                                search_success = True
+                                break
+                except Exception:
+                    pass
+            if not search_success:
+                final_response = "No results found. Make sure the server is connected to the internet or try later."
+        except Exception as e:
+            final_response = f"An error occurred during search: {str(e)}"
+    elif mode == 'code':
+        final_response = "Code generated."
+    else:
+        final_response = user_input
+    return final_response
 
 
 def get_user_id():
@@ -724,6 +949,5 @@ def get_user_id():
 
 
 if __name__ == '__main__':
-    import os
     port = int(os.environ.get('PORT', 5001))
     app.run(host='0.0.0.0', port=port)
