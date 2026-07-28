@@ -61,7 +61,8 @@
                         <h2 id="appTitle">Nexara Assistant</h2>
                         <p id="appDesc">Full Interactive Version</p>
                     </div>
-                    <div style="width: 40px;"></div>
+                    <button id="msgNavBtn" class="top-toggle-btn" title="Message Navigation"><i
+                            class="fa-regular fa-message"></i></button>
                 </div>
             </header>
             <div class="chat-area" id="chatBox">
@@ -71,12 +72,25 @@
             </div>
             <footer class="main-footer">
                 <div class="input-container">
+                    <!-- 🔥 منطقة معاينة الملفات (تظهر عند اختيار ملف) -->
+                    <div id="filePreviewArea" class="file-preview-area" style="display: none;"></div>
+
                     <div class="input-row">
-                        <input type="text" id="userInput" placeholder="Type your message here...">
+                        <textarea id="userInput" rows="1" placeholder="Type your message here..."></textarea>
+
+                        <!-- 🔥 زر الملف وزر الإرسال معاً في الجهة المقابلة -->
                         <div class="right-actions">
+                            <button id="fileAttachBtn" class="attach-btn" title="Attach file/image"
+                                onclick="document.getElementById('fileInput').click()">
+                                <i class="fa-solid fa-paperclip"></i>
+                            </button>
+                            <input type="file" id="fileInput" accept="*/*" multiple style="display: none;"
+                                onchange="handleFileSelect(this)">
+
                             <button id="sendBtn" class="send-btn"><i class="fa-solid fa-arrow-left"></i></button>
                         </div>
                     </div>
+
                     <div class="input-toolbar">
                         <div class="tools">
                             <span class="tool-tag" id="webTool"><i class="fa-solid fa-globe"></i> <span
@@ -100,6 +114,19 @@
                 </div>
             </footer>
         </main>
+    </div>
+
+    <!-- مودال فحص الرسائل -->
+    <div id="msgNavOverlay" class="modal-overlay" style="display: none;">
+        <div class="modal-box" style="max-width: 400px; text-align: left;">
+            <div class="modal-title" id="msgNavTitle">Chat History</div>
+            <div id="msgNavList"
+                style="max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-bottom: 10px;">
+            </div>
+            <div class="modal-buttons" style="margin-top: 15px; border-top: 1px solid #dbeae7; padding-top: 15px;">
+                <button onclick="closeMsgNav()" class="modal-btn cancel" style="width: 100%;">Close</button>
+            </div>
+        </div>
     </div>
 
     <!-- المودال الرئيسي -->
@@ -146,7 +173,7 @@
         </div>
     </div>
 
-    <!-- مودال الإعدادات (تم حذف Search Mode و Auto-Translate) -->
+    <!-- مودال الإعدادات -->
     <div id="settingsOverlay" class="modal-overlay" style="display: none;">
         <div class="modal-box" style="max-width: 450px; text-align: right;">
             <div class="modal-title" id="settingsTitle">Settings</div>
