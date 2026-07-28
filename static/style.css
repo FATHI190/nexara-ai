@@ -10,6 +10,7 @@
     --bubble-user: #b9ece6;
     --sidebar-width: 280px;
     --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --textarea-max-height: 200px;
 }
 
 /* Dark Mode */
@@ -37,7 +38,7 @@
 
 [data-theme="dark"] .input-container,
 [data-theme="dark"] .search-bar,
-[data-theme="dark"] input[type="text"],
+[data-theme="dark"] textarea,
 [data-theme="dark"] select {
     background-color: #2d2d2d !important;
     color: var(--text-dark) !important;
@@ -267,9 +268,6 @@ body {
 .sidebar {
     position: fixed;
     top: 0;
-    right: -100%;
-    width: 85%;
-    max-width: var(--sidebar-width);
     height: 100vh;
     background-color: var(--bg-sidebar);
     border-left: 1px solid #dbeae7;
@@ -277,13 +275,16 @@ body {
     flex-direction: column;
     padding: 20px;
     box-sizing: border-box;
-    transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     z-index: 1000;
     box-shadow: -5px 0 20px rgba(0, 0, 0, 0.1);
+    inset-inline-start: -100%;
+    width: 85%;
+    max-width: var(--sidebar-width);
+    transition: inset-inline-start 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .sidebar.open {
-    right: 0;
+    inset-inline-start: 0;
 }
 
 .sidebar-header {
@@ -420,7 +421,6 @@ body {
     text-overflow: ellipsis;
 }
 
-/* 🔥 تم إزالة النص الفرعي، لذا تم إخفاء عنصر p لجعل العنصر أقصر */
 .chat-item-text p {
     display: none;
 }
@@ -473,11 +473,11 @@ body {
     display: none;
     position: fixed;
     top: 0;
-    left: 0;
     width: 100%;
     height: 100%;
     background: var(--sidebar-overlay, rgba(0, 0, 0, 0.4));
     z-index: 999;
+    inset-inline-start: 0;
 }
 
 .sidebar-overlay.active {
@@ -671,7 +671,7 @@ body {
 .message-wrapper {
     display: flex;
     gap: 12px;
-    max-width: 85%;
+    max-width: 95%;
     animation: fadeIn 0.3s ease-in-out;
 }
 
@@ -682,6 +682,23 @@ body {
 .message-wrapper.user {
     align-self: flex-end;
     flex-direction: row-reverse;
+    align-items: flex-start;
+}
+
+.message-content {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.message-wrapper.bot .message-content {
+    align-items: flex-start;
+}
+
+.message-wrapper.user .message-content {
+    align-items: flex-end;
 }
 
 .avatar-img {
@@ -691,6 +708,7 @@ body {
     background: var(--white);
     object-fit: cover;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    flex-shrink: 0;
 }
 
 .bot-av {
@@ -711,6 +729,7 @@ body {
     font-weight: bold;
     font-size: 12px;
     color: var(--white);
+    flex-shrink: 0;
 }
 
 .message-box {
@@ -720,6 +739,11 @@ body {
     line-height: 1.5;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
     white-space: pre-line;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .bot .message-box {
@@ -733,6 +757,65 @@ body {
     color: var(--text-dark);
     border-top-left-radius: 0;
 }
+
+.message-actions {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+}
+
+.message-wrapper.bot .message-actions {
+    justify-content: flex-start;
+}
+
+.message-wrapper.user .message-actions {
+    justify-content: flex-end;
+}
+
+.copy-btn {
+    cursor: pointer;
+    color: var(--text-gray);
+    font-size: 12px;
+    padding: 4px;
+    border-radius: 50%;
+    transition: color 0.2s, background 0.2s, opacity 0.2s;
+    opacity: 0.5;
+}
+
+.copy-btn:hover {
+    color: var(--primary-teal);
+    background: rgba(0, 0, 0, 0.05);
+    opacity: 1;
+}
+
+/* 🔥 تنسيق أيقونات التقييم الجديدة */
+.feedback-btn {
+    cursor: pointer;
+    color: var(--text-gray);
+    font-size: 12px;
+    padding: 4px;
+    border-radius: 50%;
+    transition: color 0.2s, background 0.2s, opacity 0.2s;
+    opacity: 0.5;
+}
+
+.feedback-btn:hover {
+    background: rgba(0, 0, 0, 0.05);
+    opacity: 1;
+}
+
+.feedback-btn.liked {
+    color: #27ae60;
+    opacity: 1;
+}
+
+/* أخضر للإعجاب */
+.feedback-btn.disliked {
+    color: #e74c3c;
+    opacity: 1;
+}
+
+/* أحمر لعدم الإعجاب */
 
 .main-footer {
     flex-shrink: 0;
@@ -754,23 +837,85 @@ body {
     pointer-events: auto;
 }
 
-.input-row {
+.file-preview-area {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #dbeae7;
+    margin-bottom: 5px;
+}
+
+.file-preview-item {
     display: flex;
     align-items: center;
+    gap: 8px;
+    background-color: var(--bg-main);
+    padding: 6px 12px 6px 8px;
+    border-radius: 16px;
+    font-size: 12px;
+    color: var(--text-dark);
+    border: 1px solid #dbeae7;
+}
+
+.file-preview-item i {
+    font-size: 14px;
+    color: var(--primary-teal);
+}
+
+.file-preview-item .remove-preview-btn {
+    cursor: pointer;
+    color: var(--text-gray);
+    font-size: 12px;
+    margin-left: 4px;
+    transition: color 0.2s;
+}
+
+.file-preview-item .remove-preview-btn:hover {
+    color: #e74c3c;
+}
+
+.input-row {
+    display: flex;
+    align-items: flex-end;
     gap: 10px;
 }
 
-.input-container input {
+.input-container textarea {
     border: none;
     outline: none;
+    box-shadow: none;
     font-size: 15px;
     color: var(--text-dark);
-    flex: 1;
     background: transparent;
     padding: 5px 0;
+    flex: 1;
+    width: 100%;
+    resize: none;
+    overflow-y: auto;
+    min-height: 36px;
+    max-height: var(--textarea-max-height);
+    font-family: inherit;
+    line-height: 1.5;
 }
 
-/* 🔥 تعديل شريط الأدوات لاستيعاب الأدوات و Nexara 0.1 في جهتين متقابلتين */
+.input-container textarea::-webkit-scrollbar {
+    width: 6px;
+}
+
+.input-container textarea::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.input-container textarea::-webkit-scrollbar-thumb {
+    background: var(--text-gray);
+    border-radius: 4px;
+}
+
+.input-container textarea::-webkit-scrollbar-thumb:hover {
+    background: var(--primary-teal);
+}
+
 .input-toolbar {
     display: flex;
     justify-content: space-between;
@@ -889,8 +1034,31 @@ body {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    /* يذهب الزر للنهاية حسب اتجاه الصفحة (يمين/يسار) */
-    flex: 1;
+    flex-shrink: 0;
+    margin-inline-start: 10px;
+    align-self: flex-end;
+    gap: 8px;
+}
+
+.attach-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-gray);
+    font-size: 18px;
+    padding: 6px;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 32px;
+    height: 32px;
+}
+
+.attach-btn:hover {
+    color: var(--primary-teal);
+    background: rgba(0, 0, 0, 0.05);
 }
 
 .send-btn {
@@ -915,7 +1083,6 @@ body {
     transform: none !important;
 }
 
-/* 🔥 تم وضع نسخة البرنامج بجانب أدوات الويب والكود */
 .version-text {
     font-size: 10px;
     color: var(--text-gray);
@@ -1063,6 +1230,53 @@ body {
     left: 22px;
 }
 
+#msgNavOverlay .modal-box {
+    max-width: 450px;
+    text-align: left;
+}
+
+#msgNavOverlay .modal-title {
+    padding-bottom: 15px;
+    border-bottom: 1px solid #dbeae7;
+}
+
+#msgNavList {
+    max-height: 65vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+#msgNavList::-webkit-scrollbar {
+    width: 6px;
+}
+
+#msgNavList::-webkit-scrollbar-thumb {
+    background: var(--text-gray);
+    border-radius: 4px;
+}
+
+.msg-nav-item {
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-radius: 8px;
+    border: none;
+}
+
+.msg-nav-item:hover {
+    background: rgba(14, 210, 190, 0.1);
+}
+
+.msg-nav-text {
+    font-size: 13px;
+    color: var(--text-dark);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 @media (min-width: 769px) {
     .app-container {
         flex-direction: row;
@@ -1070,7 +1284,7 @@ body {
 
     .sidebar {
         position: relative;
-        right: 0 !important;
+        inset-inline-start: 0 !important;
         width: var(--sidebar-width);
         min-width: var(--sidebar-width);
         height: 100vh;
@@ -1106,11 +1320,11 @@ body {
 
 @media (max-width: 768px) {
     .sidebar:not(.open) {
-        right: -100%;
+        inset-inline-start: -100%;
     }
 
     .sidebar.open {
-        right: 0;
+        inset-inline-start: 0;
     }
 
     .header-title h2 {
@@ -1126,7 +1340,7 @@ body {
     }
 
     .message-wrapper {
-        max-width: 95%;
+        max-width: 98%;
     }
 
     .message-box {
