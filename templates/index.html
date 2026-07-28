@@ -17,18 +17,19 @@
             <div class="sidebar-header">
                 <img src="/static/logo-removebg-preview.png?v=4" class="brand-logo-img" alt="Nexara Logo">
                 <div class="brand-info">
-                    <h3>Nexara</h3>
-                    <p>مساحة المساعد الذكي</p>
+                    <h3 id="appName">Nexara</h3>
+                    <p id="appTagline">Smart Assistant Space</p>
                 </div>
             </div>
-            <button id="newChatBtn" class="new-chat-btn"><i class="fa-solid fa-plus"></i> محادثة جديدة</button>
+            <button id="newChatBtn" class="new-chat-btn"><i class="fa-solid fa-plus"></i> <span id="newChatText">New
+                    Chat</span></button>
 
             <div class="folders-section">
                 <div class="folders-header">
-                    <span class="section-title">المجلدات</span>
+                    <span class="section-title" id="foldersTitle">Folders</span>
                     <div class="folders-actions">
                         <i class="fa-solid fa-folder-plus" onclick="openCreateFolderModal()"
-                            title="إنشاء مجلد جديد"></i>
+                            title="Create new folder"></i>
                     </div>
                 </div>
                 <div id="foldersList" class="folders-list"></div>
@@ -36,16 +37,17 @@
 
             <div class="search-bar">
                 <i class="fa-solid fa-magnifying-glass"></i>
-                <input type="text" id="searchInput" placeholder="ابحث في المحادثات...">
+                <input type="text" id="searchInput" placeholder="Search in chats...">
             </div>
             <div class="recent-chats">
-                <span class="section-title">المحادثات الأخيرة</span>
+                <span class="section-title" id="recentChatsTitle">Recent Chats</span>
                 <div id="conversationsList"></div>
             </div>
             <div class="sidebar-footer">
-                <div class="footer-item" onclick="openLibrary()"><i class="fa-regular fa-folder-open"></i> مكتبة الأوامر
-                </div>
-                <div class="footer-item" onclick="openSettings()"><i class="fa-solid fa-gear"></i> الإعدادات</div>
+                <div class="footer-item" onclick="openLibrary()"><i class="fa-regular fa-folder-open"></i> <span
+                        id="cmdLibraryText">Command Library</span></div>
+                <div class="footer-item" onclick="openSettings()"><i class="fa-solid fa-gear"></i> <span
+                        id="settingsText">Settings</span></div>
             </div>
         </aside>
 
@@ -53,34 +55,34 @@
             <header class="main-header">
                 <div
                     style="display: flex; align-items: center; gap: 12px; width: 100%; justify-content: space-between;">
-                    <button id="topSidebarToggle" class="top-toggle-btn" title="إخفاء / إظهار القائمة"><i
+                    <button id="topSidebarToggle" class="top-toggle-btn" title="Toggle sidebar"><i
                             class="fa-solid fa-bars"></i></button>
                     <div class="header-title" style="flex: 1; text-align: center;">
-                        <h2>مساعد Nexara</h2>
-                        <p>النسخة التفاعلية الكاملة</p>
+                        <h2 id="appTitle">Nexara Assistant</h2>
+                        <p id="appDesc">Full Interactive Version</p>
                     </div>
                     <div style="width: 40px;"></div>
                 </div>
             </header>
             <div class="chat-area" id="chatBox">
                 <div class="landing-greeting" id="landingGreeting">
-                    <h1>مرحبا، كيف يمكنني مساعدتك اليوم؟</h1>
+                    <h1 id="greetingText">Hello, how can I help you today?</h1>
                 </div>
             </div>
             <footer class="main-footer">
                 <div class="input-container">
                     <div class="input-row">
-                        <input type="text" id="userInput" placeholder="اكتب رسالتك هنا...">
+                        <input type="text" id="userInput" placeholder="Type your message here...">
                         <div class="right-actions">
                             <button id="sendBtn" class="send-btn"><i class="fa-solid fa-arrow-left"></i></button>
                         </div>
                     </div>
-                    <span class="version-text">Nexara 0.1</span>
                     <div class="input-toolbar">
                         <div class="tools">
-                            <span class="tool-tag" id="webTool"><i class="fa-solid fa-globe"></i> ويب</span>
-                            <span class="tool-tag" id="codeTool"><i class="fa-solid fa-code"></i> كود</span>
-                            <!-- 🔥 زر الصوت المحدث -->
+                            <span class="tool-tag" id="webTool"><i class="fa-solid fa-globe"></i> <span
+                                    id="webText">Web</span></span>
+                            <span class="tool-tag" id="codeTool"><i class="fa-solid fa-code"></i> <span
+                                    id="codeText">Code</span></span>
                             <span class="tool-tag" id="voiceTool">
                                 <div class="mic-container">
                                     <i class="fa-solid fa-microphone"></i>
@@ -90,9 +92,10 @@
                                     <div class="wave"></div>
                                     <div class="wave"></div>
                                 </div>
-                                صوت
+                                <span id="voiceText">Voice</span>
                             </span>
                         </div>
+                        <span class="version-text" id="versionText">Nexara 0.1</span>
                     </div>
                 </div>
             </footer>
@@ -102,15 +105,15 @@
     <!-- المودال الرئيسي -->
     <div id="modalOverlay" class="modal-overlay">
         <div class="modal-box" id="modalBox">
-            <div class="modal-title" id="modalTitle">تأكيد الحذف</div>
+            <div class="modal-title" id="modalTitle">Confirm Delete</div>
             <div id="modalContentContainer">
-                <input type="text" id="modalInput" class="modal-input" placeholder="أدخل الاسم الجديد..."
+                <input type="text" id="modalInput" class="modal-input" placeholder="Enter new name..."
                     style="display: none;">
                 <p id="modalMessage" style="color: var(--text-gray); margin-bottom: 0;"></p>
             </div>
             <div class="modal-buttons">
-                <button id="modalCancelBtn" class="modal-btn cancel">إلغاء</button>
-                <button id="modalConfirmBtn" class="modal-btn confirm">تأكيد</button>
+                <button id="modalCancelBtn" class="modal-btn cancel">Cancel</button>
+                <button id="modalConfirmBtn" class="modal-btn confirm">Confirm</button>
             </div>
         </div>
     </div>
@@ -118,14 +121,82 @@
     <!-- مودال نقل المحادثة -->
     <div id="moveModalOverlay" class="modal-overlay" style="display: none;">
         <div class="modal-box">
-            <div class="modal-title">نقل المحادثة إلى مجلد</div>
+            <div class="modal-title" id="moveTitle">Move Conversation to Folder</div>
             <select id="moveFolderSelect" class="modal-input"
                 style="display: block; width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #ccc;">
-                <option value="0">غير مصنف</option>
+                <option value="0">Uncategorized</option>
             </select>
             <div class="modal-buttons">
-                <button class="modal-btn cancel" onclick="closeMoveModal()">إلغاء</button>
-                <button class="modal-btn confirm" onclick="executeMove()">نقل</button>
+                <button class="modal-btn cancel" onclick="closeMoveModal()">Cancel</button>
+                <button class="modal-btn confirm" onclick="executeMove()">Move</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- مودال إنشاء مجلد جديد -->
+    <div id="folderModalOverlay" class="modal-overlay" style="display: none;">
+        <div class="modal-box">
+            <div class="modal-title" id="createFolderTitle">Create New Folder</div>
+            <input type="text" id="folderInput" class="modal-input" placeholder="Folder name..."
+                style="display: block;">
+            <div class="modal-buttons">
+                <button class="modal-btn cancel" onclick="closeFolderModal()">Cancel</button>
+                <button class="modal-btn confirm" onclick="createFolder()">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- مودال الإعدادات (تم حذف Search Mode و Auto-Translate) -->
+    <div id="settingsOverlay" class="modal-overlay" style="display: none;">
+        <div class="modal-box" style="max-width: 450px; text-align: right;">
+            <div class="modal-title" id="settingsTitle">Settings</div>
+
+            <div style="margin-bottom: 15px; display: flex; align-items: center; justify-content: space-between;">
+                <label for="themeToggle" id="themeLabel">Dark Mode</label>
+                <div id="themeToggle" class="toggle-switch" onclick="toggleTheme()">
+                    <div class="toggle-slider"></div>
+                </div>
+            </div>
+
+            <!-- قائمة اللغات المخصصة (6 لغات) -->
+            <div
+                style="margin-bottom: 15px; display: flex; align-items: center; justify-content: space-between; position: relative;">
+                <label id="langLabel">Interface Language</label>
+                <div class="custom-select-wrapper" id="langSelectWrapper">
+                    <div class="custom-select-trigger" id="langSelectTrigger">
+                        <span id="selectedLangText">English</span>
+                        <i class="fa-solid fa-chevron-down"></i>
+                    </div>
+                    <div class="custom-options" id="langOptions"></div>
+                </div>
+            </div>
+
+            <div
+                style="border-top: 1px solid #dbeae7; padding-top: 15px; display: flex; flex-direction: column; gap: 10px;">
+                <button onclick="openClearChatsConfirm()"
+                    style="background: #e74c3c; color: white; border: none; padding: 10px; border-radius: 10px; cursor: pointer; width: 100%; font-weight: bold;">Clear
+                    All Chats</button>
+                <button onclick="openResetSettingsConfirm()" class="settings-btn"
+                    style="background: #f0f6f5; color: var(--text-dark); border: none; padding: 10px; border-radius: 10px; cursor: pointer; width: 100%; font-weight: bold;">Reset
+                    Settings</button>
+            </div>
+
+            <div class="modal-buttons" style="margin-top: 20px;">
+                <button onclick="closeSettings()" class="modal-btn cancel">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- مودال التأكيد المخصص -->
+    <div id="confirmModalOverlay" class="modal-overlay" style="display: none;">
+        <div class="modal-box">
+            <div class="modal-title" id="confirmModalTitle">Confirm Action</div>
+            <p id="confirmModalMessage"
+                style="color: var(--text-gray); margin-bottom: 15px; font-size: 15px; line-height: 1.6;"></p>
+            <div class="modal-buttons">
+                <button id="confirmModalCancelBtn" class="modal-btn cancel">Cancel</button>
+                <button id="confirmModalConfirmBtn" class="modal-btn confirm"
+                    style="background-color: #e74c3c;">Confirm</button>
             </div>
         </div>
     </div>
