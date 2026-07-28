@@ -10,7 +10,10 @@ import requests
 from flask import Flask, render_template, request, jsonify, g, Response
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
-from deep_translator import GoogleTranslator
+try:
+    from deep_translator import GoogleTranslator
+except:
+    GoogleTranslator = None
 
 sys.stdout.reconfigure(encoding='utf-8')
 app = Flask(__name__)
@@ -22,12 +25,6 @@ WEIGHTS_FILE = os.path.join(BASE_DIR, "nexara_weights.json")
 
 temp_sessions = {}
 temp_id_counter = 1000
-
-try:
-    translator = GoogleTranslator(source='auto', target='ar')
-except Exception:
-    translator = None
-    print("⚠️ تنبيه: لم يتم تحميل الترجمة.")
 
 
 def get_db():
@@ -323,9 +320,10 @@ def new_session():
     try:
         user_id = get_user_id()
         db = get_db()
+        data = request.get_json() or {}
+        ui_lang = data.get('lang', 'en')
+        default_title = "New Chat" if ui_lang == 'en' else "محادثة جديدة"
         if db is not None:
-            default_title = "محادثة جديدة"
-            data = request.get_json() or {}
             folder_id = data.get('folder_id', 0)
             cur = db.execute("INSERT INTO conversations (user_id, title, folder_id) VALUES (?, ?, ?)",
                              (user_id, default_title, folder_id))
@@ -335,13 +333,13 @@ def new_session():
         else:
             temp_id_counter += 1
             temp_sessions[temp_id_counter] = {
-                "title": "محادثة جديدة (مؤقتة)", "messages": []}
-            return jsonify({'id': temp_id_counter, 'title': "محادثة جديدة (مؤقتة)"})
+                "title": default_title, "messages": []}
+            return jsonify({'id': temp_id_counter, 'title': default_title})
     except Exception:
         temp_id_counter += 1
         temp_sessions[temp_id_counter] = {
-            "title": "محادثة جديدة (مؤقتة)", "messages": []}
-        return jsonify({'id': temp_id_counter, 'title': "محادثة جديدة (مؤقتة)"})
+            "title": "محادثة جديدة", "messages": []}
+        return jsonify({'id': temp_id_counter, 'title': "محادثة جديدة"})
 
 
 @app.route('/api/sessions/<int:session_id>', methods=['DELETE'])
@@ -428,8 +426,6 @@ def search_conversations():
     except Exception:
         return jsonify([])
 
-# 🔥 مسار تصدير المحادثة كملف نصي
-
 
 @app.route('/api/export/<int:session_id>', methods=['GET'])
 def export_chat(session_id):
@@ -438,32 +434,21 @@ def export_chat(session_id):
         db = get_db()
         if db is None:
             return Response("خطأ في قاعدة البيانات", status=500)
-
-        # التحقق من وجود المحادثة
         cur = db.execute(
             "SELECT title FROM conversations WHERE id = ? AND user_id = ?", (session_id, user_id))
         conv = cur.fetchone()
         if not conv:
             return Response("المحادثة غير موجودة", status=404)
-
-        # جلب الرسائل
         cur = db.execute(
             "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id ASC", (session_id,))
         messages = cur.fetchall()
-
-        # إنشاء محتوى الملف النصي
         content = f"--- تصدير المحادثة: {conv['title']} ---\n"
-        content += f"التاريخ: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        content += "="*40 + "\n\n"
-
+        content += f"التاريخ: {time.strftime('%Y-%m-%d %H:%M:%S')}\n" + \
+            "="*40 + "\n\n"
         for msg in messages:
             role_label = "أنت" if msg['role'] == 'user' else "Nexara"
             content += f"{role_label}:\n{msg['content']}\n\n"
-
-        content += "="*40 + "\n"
-        content += "نهاية التصدير"
-
-        # إرجاع الملف للتنزيل
+        content += "="*40 + "\nنهاية التصدير"
         response = Response(content, mimetype='text/plain')
         response.headers[
             'Content-Disposition'] = f'attachment; filename=nexara_chat_{session_id}.txt'
@@ -471,75 +456,65 @@ def export_chat(session_id):
     except Exception as e:
         return Response(f"خطأ في التصدير: {str(e)}", status=500)
 
+
+@app.route('/api/clear_all_chats', methods=['DELETE'])
+def clear_all_chats():
+    try:
+        user_id = get_user_id()
+        db = get_db()
+        if db is None:
+            return jsonify({'success': False}), 500
+        db.execute(
+            "DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE user_id = ?)", (user_id,))
+        db.execute("DELETE FROM conversations WHERE user_id = ?", (user_id,))
+        db.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # ======================================================================
-# 🔥 معالج الأوامر (Command Handler) - الإصدار المحسن
+# 🔥 معالج الأوامر
 # ======================================================================
 
 
 def process_command(user_input, conv_id, user_id, db):
-    # 🔥 تنظيف المدخلات: إزالة المسافات الزائدة والشرطات المائلة الزائدة في النهاية
     clean_input = user_input.strip().rstrip('/')
     parts = clean_input.split(' ', 1)
     cmd = parts[0].lower()
-
-    # الأمر /help
     if cmd == '/help':
-        return (
-            "📖 **قائمة أوامر Nexara:**\n\n"
-            "`/help` - عرض قائمة الأوامر.\n"
-            "`/rename [اسم جديد]` - تغيير عنوان المحادثة الحالية.\n"
-            "`/delete` - حذف المحادثة الحالية بالكامل.\n"
-            "`/export` - تصدير المحادثة الحالية كملف نصي (سيتم تنزيله).\n"
-            "`/folder [اسم المجلد]` - إنشاء مجلد جديد.\n"
-            "`/move [اسم المجلد]` - نقل المحادثة الحالية إلى مجلد (يتم إنشاؤه إذا لم يكن موجوداً).\n\n"
-            "*نصيحة: يمكنك استخدام هذه الأوامر مباشرة في مربع الدردشة دون وضع شرطة مائلة في النهاية.*"
-        )
-
-    # الأمر /rename
+        return "📖 **Nexara Command List:**\n\n`/help` - Show this help message.\n`/rename [new name]` - Rename current conversation.\n`/delete` - Delete current conversation.\n`/export` - Export current conversation as a text file.\n`/folder [folder name]` - Create a new folder.\n`/move [folder name]` - Move current conversation to a folder.\n\n*Tip: Do not put a slash (/) at the end.*"
     if cmd == '/rename' and len(parts) > 1:
         new_title = parts[1].strip()
         if not new_title:
-            return "❌ خطأ: يجب كتابة اسم جديد بعد الأمر. مثال: `/rename مشروعي الجديد`"
+            return "❌ Error: Please provide a new name. Example: `/rename My Project`"
         db.execute("UPDATE conversations SET title = ? WHERE id = ?",
                    (new_title, conv_id))
         db.commit()
-        return f"✅ تم إعادة تسمية المحادثة إلى: **{new_title}**"
-
-    # الأمر /delete
+        return f"✅ Conversation renamed to: **{new_title}**"
     if cmd == '/delete':
         db.execute("DELETE FROM messages WHERE conversation_id = ?", (conv_id,))
         db.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
         db.commit()
-        return "🗑️ ✅ تم حذف المحادثة الحالية بنجاح. (ستقوم الصفحة بتحديث القائمة تلقائياً)"
-
-    # الأمر /export
+        return "🗑️ ✅ Conversation deleted successfully."
     if cmd == '/export':
-        export_url = f"/api/export/{conv_id}"
-        return f"📂 **رابط تصدير المحادثة:** [اضغط هنا لتنزيل ملف نصي]({export_url})"
-
-    # الأمر /folder
+        return f"📂 **Export Link:** [Click here to download text file](/api/export/{conv_id})"
     if cmd == '/folder' and len(parts) > 1:
         folder_name = parts[1].strip()
         if not folder_name:
-            return "❌ خطأ: يجب كتابة اسم المجلد. مثال: `/folder دروس`"
-
+            return "❌ Error: Please provide a folder name. Example: `/folder Projects`"
         cur = db.execute(
             "SELECT id FROM folders WHERE user_id = ? AND name = ?", (user_id, folder_name))
         existing = cur.fetchone()
         if existing:
-            return f"⚠️ المجلد `{folder_name}` موجود بالفعل."
-
+            return f"⚠️ Folder `{folder_name}` already exists."
         cur = db.execute(
             "INSERT INTO folders (user_id, name) VALUES (?, ?)", (user_id, folder_name))
         db.commit()
-        return f"📁 ✅ تم إنشاء مجلد جديد: **{folder_name}**"
-
-    # الأمر /move
+        return f"📁 ✅ New folder created: **{folder_name}**"
     if cmd == '/move' and len(parts) > 1:
         folder_name = parts[1].strip()
         if not folder_name:
-            return "❌ خطأ: يجب كتابة اسم المجلد. مثال: `/move دروس`"
-
+            return "❌ Error: Please provide a folder name. Example: `/move Projects`"
         cur = db.execute(
             "SELECT id FROM folders WHERE user_id = ? AND name = ?", (user_id, folder_name))
         existing = cur.fetchone()
@@ -550,23 +525,11 @@ def process_command(user_input, conv_id, user_id, db):
                 "INSERT INTO folders (user_id, name) VALUES (?, ?)", (user_id, folder_name))
             folder_id = cur.lastrowid
             db.commit()
-
         db.execute(
             "UPDATE conversations SET folder_id = ? WHERE id = ?", (folder_id, conv_id))
         db.commit()
-        return f"📦 ✅ تم نقل المحادثة إلى مجلد: **{folder_name}**"
-
-    # إذا كتب أمراً غير معروف
-    return f"⚠️ أمر غير معروف: `{cmd}`. اكتب `/help` لعرض قائمة الأوامر المتاحة."
-
-
-def translate_text(text):
-    if not text or not translator:
-        return text
-    try:
-        return translator.translate(text)
-    except:
-        return text
+        return f"📦 ✅ Conversation moved to folder: **{folder_name}**"
+    return f"⚠️ Unknown command: `{cmd}`. Type `/help` for available commands."
 
 
 @app.route('/predict', methods=['POST'])
@@ -576,13 +539,12 @@ def predict():
         user_input = data.get('input', '').strip()
         mode = data.get('mode', 'general')
         conv_id = data.get('conversation_id')
-
+        ui_lang = data.get('lang', 'en')
+        search_mode = data.get('search_mode', 'web')
         if not user_input:
-            return jsonify({'response': '❌ من فضلك اكتب رسالة أولاً.'})
-
+            return jsonify({'response': '❌ Please write a message first.'})
         db = get_db()
         is_memory_mode = False
-
         if conv_id in temp_sessions:
             is_memory_mode = True
             temp_sessions[conv_id]['messages'].append(
@@ -599,7 +561,7 @@ def predict():
                 cur = db.execute(
                     "SELECT title FROM conversations WHERE id = ?", (conv_id,))
                 conv = cur.fetchone()
-                if conv and conv['title'] == "محادثة جديدة":
+                if conv and conv['title'] in ["محادثة جديدة", "New Chat"]:
                     new_title = user_input[:30] + \
                         ("..." if len(user_input) > 30 else "")
                     db.execute(
@@ -608,31 +570,33 @@ def predict():
                 db.execute("INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)",
                            (conv_id, 'user', user_input))
                 db.commit()
-
         final_response = ""
-
-        # 🔥 1. التحقق مما إذا كان الإدخال أمراً
         if user_input.startswith('/'):
             final_response = process_command(
                 user_input, conv_id, get_user_id(), db)
         else:
-            # 2. إذا لم يكن أمراً، نتابع المعالجة العادية
             if mode == 'web':
                 try:
                     search_success = False
                     final_response = ""
-                    translated_query = translate_text(user_input)
+                    try:
+                        if GoogleTranslator:
+                            translator_query = GoogleTranslator(
+                                source='auto', target='en')
+                            translated_query = translator_query.translate(
+                                user_input)
+                        else:
+                            translated_query = user_input
+                    except:
+                        translated_query = user_input
                     clean_eng_query = re.sub(
                         r'[^\w\s]', '', translated_query).strip()
                     if not clean_eng_query:
                         clean_eng_query = user_input
-
                     try:
                         with ThreadPoolExecutor(max_workers=1) as executor:
                             future = executor.submit(lambda: requests.get(
-                                f"https://api.duckduckgo.com/?q={clean_eng_query}&format=json&no_html=1&skip_disambig=1",
-                                timeout=2
-                            ))
+                                f"https://api.duckduckgo.com/?q={clean_eng_query}&format=json&no_html=1&skip_disambig=1", timeout=2))
                             response = future.result(timeout=1.5)
                             if response.status_code == 200:
                                 data_ddg = response.json()
@@ -640,11 +604,19 @@ def predict():
                                 if abstract and len(abstract) > 20:
                                     clean_ddg = re.sub(
                                         r'[*\[\]=#]', '', abstract)
-                                    final_response = translate_text(clean_ddg)
+                                    try:
+                                        if GoogleTranslator:
+                                            translator_web = GoogleTranslator(
+                                                source='auto', target=ui_lang)
+                                            final_response = translator_web.translate(
+                                                clean_ddg)
+                                        else:
+                                            final_response = clean_ddg
+                                    except:
+                                        final_response = clean_ddg
                                     search_success = True
                     except (TimeoutError, Exception):
                         pass
-
                     if not search_success:
                         try:
                             headers = {
@@ -660,22 +632,26 @@ def predict():
                                     if extract and len(extract) > 30:
                                         clean_text = re.sub(
                                             r'[*\[\]=#]', '', extract)
-                                        final_response = translate_text(
-                                            clean_text)
+                                        try:
+                                            if GoogleTranslator:
+                                                translator_web = GoogleTranslator(
+                                                    source='auto', target=ui_lang)
+                                                final_response = translator_web.translate(
+                                                    clean_text)
+                                            else:
+                                                final_response = clean_text
+                                        except:
+                                            final_response = clean_text
                                         search_success = True
                                         break
                         except Exception:
                             pass
-
                     if not search_success:
-                        final_response = "لم يعثر البحث على أي نتائج. تأكد من أن الخادم متصل بالإنترنت أو حاول لاحقاً."
-
+                        final_response = "No results found. Make sure the server is connected to the internet or try later."
                 except Exception as e:
-                    final_response = f"حدث خطأ أثناء البحث. {str(e)}"
-
+                    final_response = f"An error occurred during search: {str(e)}"
             elif mode == 'code':
-                final_response = "تم توليد الكود."
-
+                final_response = "Code generated."
             else:
                 math_match = re.search(
                     r'(\d+)\s*([\+\-\*/])\s*(\d+)', user_input)
@@ -684,7 +660,7 @@ def predict():
                         2), float(math_match.group(3))
                     if op == '/':
                         if n2 == 0:
-                            final_response = '❌ لا يمكن القسمة على صفر!'
+                            final_response = '❌ Cannot divide by zero!'
                         else:
                             scale_m = n1 * n2
                             n1_s, n2_s = n1 / \
@@ -692,7 +668,7 @@ def predict():
                             ans = ((n1_s * n2_s) * w_d + b_d) * (n1 / n2)
                             final_output = int(round(ans)) if round(
                                 ans, 4).is_integer() else round(ans, 4)
-                            final_response = f"النتيجة الرياضية: {final_output}"
+                            final_response = f"Math result: {final_output}"
                     elif op == '*':
                         scale = n1 * n2
                         n1_s, n2_s = n1 / \
@@ -700,7 +676,7 @@ def predict():
                         ans = ((n1_s * n2_s) * w_mu + b_mu) * scale
                         final_output = int(round(ans)) if round(
                             ans, 4).is_integer() else round(ans, 4)
-                        final_response = f"النتيجة الرياضية: {final_output}"
+                        final_response = f"Math result: {final_output}"
                     else:
                         scale = (n1 + n2 if (n1 + n2) != 0 else 1)
                         n1_s, n2_s = n1 / scale, n2 / scale
@@ -710,21 +686,20 @@ def predict():
                             ans = ((n1_s * w_m1) + (n2_s * w_m2) + b_m) * scale
                         final_output = int(round(ans)) if round(
                             ans, 4).is_integer() else round(ans, 4)
-                        final_response = f"النتيجة الرياضية: {final_output}"
+                        final_response = f"Math result: {final_output}"
                 else:
                     nums = [float(x)
                             for x in re.findall(r'\d+\.?\d*', user_input)]
                     if len(nums) >= 2 and any(x in user_input for x in ['طقس', 'جو', 'دراسة', 'مذاكرة', 'لعب']):
                         if any(x in user_input for x in ['طقس', 'جو']):
                             score = nums[0]*w_t + nums[1]*w_h + b_w
-                            decision = "🏞️ مناسب للخروج!" if score > 0 else "🏠 ابق في المنزل."
+                            decision = "🏞️ Suitable for going out!" if score > 0 else "🏠 Stay at home."
                         else:
                             score = nums[0]*w_ex + nums[1]*w_hr + b_s
-                            decision = "🎮 يمكنك اللعب!" if score > 0 else "📚 افتح الكتب فوراً."
-                        final_response = f"القرار: {decision}"
+                            decision = "🎮 You can play!" if score > 0 else "📚 Open your books immediately."
+                        final_response = f"Decision: {decision}"
                     else:
                         final_response = user_input
-
         if is_memory_mode:
             temp_sessions[conv_id]['messages'].append(
                 {'role': 'bot', 'content': final_response})
@@ -732,10 +707,9 @@ def predict():
             db.execute("INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)",
                        (conv_id, 'bot', final_response))
             db.commit()
-
         return jsonify({'response': final_response})
     except Exception as e:
-        return jsonify({'response': f"❌ خطأ فني: {str(e)}"})
+        return jsonify({'response': f"❌ Technical error: {str(e)}"})
 
 
 def get_user_id():
