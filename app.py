@@ -218,7 +218,6 @@ else:
 
 
 def get_best_fuzzy_match(input_word, options, threshold=0.70):
-    """تجد أفضل تطابق ضبابي بين كلمة وقائمة من الخيارات"""
     input_word = input_word.lower()
     best_match = None
     best_ratio = 0.0
@@ -233,7 +232,6 @@ def get_best_fuzzy_match(input_word, options, threshold=0.70):
 
 
 def find_intent_in_text(text, intent_map, threshold=0.70):
-    """تبحث عن نية (Intent) داخل النص باستخدام التشابه الضبابي"""
     words = text.lower().split()
     for word in words:
         for intent, keywords in intent_map.items():
@@ -244,7 +242,6 @@ def find_intent_in_text(text, intent_map, threshold=0.70):
 
 
 def find_command(text, command_map, threshold=0.75):
-    """تبحث عن أمر داخل النص إذا بدأ بـ /"""
     if not text.startswith('/'):
         return None, None
 
@@ -562,7 +559,7 @@ def clear_all_chats():
 
 
 # ======================================================================
-# 🔥 معالج الأوامر والتنبؤ الذكي (Fuzzy Logic)
+# 🔥 معالج الأوامر والتنبؤ الذكي
 # ======================================================================
 COMMAND_MAP = {
     'rename': ['rename', 'remane', 'rname', 'renmae', 'enme'],
@@ -575,8 +572,7 @@ COMMAND_MAP = {
 
 INTENT_MAP = {
     'weather': ['طقس', 'جو', 'حرارة', 'درجة حرارة', 'مطر'],
-    'study': ['دراسة', 'مذاكرة', 'لعب', 'وقت الفراغ'],
-    'math': ['جمع', 'طرح', 'ضرب', 'قسمة', 'حساب', 'معادلة']
+    'study': ['دراسة', 'مذاكرة', 'لعب', 'وقت الفراغ']
 }
 
 
@@ -686,17 +682,58 @@ def predict():
         final_response = ""
 
         # ======================================================================
-        # 🔥 1. التحقق من الأوامر (مع منطق التطابق الضبابي)
+        # 🔥 0. الأولوية القصوى: الكشف عن العمليات الحسابية (يدعم +, -, *, /, ×, ÷)
         # ======================================================================
-        if user_input.startswith('/'):
+        math_match = re.search(r'(\d+)\s*([\+\-\*/×÷])\s*(\d+)', user_input)
+        if math_match:
+            n1, op, n2 = float(math_match.group(1)), math_match.group(
+                2), float(math_match.group(3))
+
+            # 🔥 إصلاح القسمة: يدعم الآن كلاً من / و ÷
+            if op in ['/', '÷']:
+                if n2 == 0:
+                    final_response = '❌ Cannot divide by zero!'
+                else:
+                    scale_m = n1 * n2
+                    n1_s, n2_s = n1 / \
+                        math.sqrt(scale_m), n2 / math.sqrt(scale_m)
+                    ans = ((n1_s * n2_s) * w_d + b_d) * (n1 / n2)
+                    final_output = int(round(ans)) if round(
+                        ans, 4).is_integer() else round(ans, 4)
+                    final_response = f"Math result: {final_output}"
+
+            # 🔥 إصلاح الضرب: يدعم الآن كلاً من * و ×
+            elif op in ['*', '×']:
+                scale = n1 * n2
+                n1_s, n2_s = n1 / math.sqrt(scale), n2 / math.sqrt(scale)
+                ans = ((n1_s * n2_s) * w_mu + b_mu) * scale
+                final_output = int(round(ans)) if round(
+                    ans, 4).is_integer() else round(ans, 4)
+                final_response = f"Math result: {final_output}"
+
+            # الجمع والطرح
+            else:
+                scale = (n1 + n2 if (n1 + n2) != 0 else 1)
+                n1_s, n2_s = n1 / scale, n2 / scale
+                if op == '+':
+                    ans = ((n1_s * w_p1) + (n2_s * w_p2) + b_p) * scale
+                elif op == '-':
+                    ans = ((n1_s * w_m1) + (n2_s * w_m2) + b_m) * scale
+                final_output = int(round(ans)) if round(
+                    ans, 4).is_integer() else round(ans, 4)
+                final_response = f"Math result: {final_output}"
+
+        # ======================================================================
+        # 🔥 1. التحقق من الأوامر
+        # ======================================================================
+        elif user_input.startswith('/'):
             final_response = process_command_fuzzy(
                 user_input, conv_id, get_user_id(), db)
 
         # ======================================================================
-        # 🔥 2. التحقق من النوايا (Intent Recognition باستخدام Fuzzy Matching)
+        # 🔥 2. التحقق من الترحيبات
         # ======================================================================
         else:
-            # 2.1. التحقق من الترحيبات أولاً
             words = user_input.lower().split()
             core_greetings = ['مرحبا', 'أهلا', 'سلام', 'صباح', 'مساء',
                               'hello', 'hi', 'hey', 'bonjour', 'salut', 'guten', 'hola']
@@ -755,13 +792,12 @@ def predict():
                     final_response = "Hello! How can I assist you today?"
 
             # ======================================================================
-            # 🔥 3. التحقق من النوايا الأخرى (طقس، دراسة، رياضيات) باستخدام Fuzzy Logic
+            # 🔥 3. التحقق من النوايا الأخرى
             # ======================================================================
             else:
                 intent, matched_keyword = find_intent_in_text(
                     user_input, INTENT_MAP)
 
-                # إذا تم اكتشاف نية الطقس
                 if intent == 'weather':
                     nums = [float(x)
                             for x in re.findall(r'\d+\.?\d*', user_input)]
@@ -770,10 +806,8 @@ def predict():
                         decision = "🏞️ Suitable for going out!" if score > 0 else "🏠 Stay at home."
                         final_response = f"Decision: {decision}"
                     else:
-                        # إذا كان سؤال طقس بدون أرقام، قم بتوجيهه للبحث في الويب
                         mode = 'web'
 
-                # إذا تم اكتشاف نية دراسة
                 elif intent == 'study':
                     nums = [float(x)
                             for x in re.findall(r'\d+\.?\d*', user_input)]
@@ -784,49 +818,8 @@ def predict():
                     else:
                         final_response = user_input
 
-                # إذا تم اكتشاف نية رياضيات
-                elif intent == 'math':
-                    math_match = re.search(
-                        r'(\d+)\s*([\+\-\*/])\s*(\d+)', user_input)
-                    if math_match:
-                        n1, op, n2 = float(math_match.group(1)), math_match.group(
-                            2), float(math_match.group(3))
-                        if op == '/':
-                            if n2 == 0:
-                                final_response = '❌ Cannot divide by zero!'
-                            else:
-                                scale_m = n1 * n2
-                                n1_s, n2_s = n1 / \
-                                    math.sqrt(scale_m), n2 / math.sqrt(scale_m)
-                                ans = ((n1_s * n2_s) * w_d + b_d) * (n1 / n2)
-                                final_output = int(round(ans)) if round(
-                                    ans, 4).is_integer() else round(ans, 4)
-                                final_response = f"Math result: {final_output}"
-                        elif op == '*':
-                            scale = n1 * n2
-                            n1_s, n2_s = n1 / \
-                                math.sqrt(scale), n2 / math.sqrt(scale)
-                            ans = ((n1_s * n2_s) * w_mu + b_mu) * scale
-                            final_output = int(round(ans)) if round(
-                                ans, 4).is_integer() else round(ans, 4)
-                            final_response = f"Math result: {final_output}"
-                        else:
-                            scale = (n1 + n2 if (n1 + n2) != 0 else 1)
-                            n1_s, n2_s = n1 / scale, n2 / scale
-                            if op == '+':
-                                ans = ((n1_s * w_p1) +
-                                       (n2_s * w_p2) + b_p) * scale
-                            elif op == '-':
-                                ans = ((n1_s * w_m1) +
-                                       (n2_s * w_m2) + b_m) * scale
-                            final_output = int(round(ans)) if round(
-                                ans, 4).is_integer() else round(ans, 4)
-                            final_response = f"Math result: {final_output}"
-                    else:
-                        final_response = user_input
-
                 # ======================================================================
-                # 🔥 4. المسار العادي (Web Search أو انعكاس النص)
+                # 🔥 4. المسار العادي
                 # ======================================================================
                 if not final_response:
                     if mode == 'web' or intent == 'weather':
