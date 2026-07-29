@@ -5,4 +5,3 @@ duckduckgo-search
 wikipedia
 deep-translator
 requests
-Werkzeug==2.3.0
