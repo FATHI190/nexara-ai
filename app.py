@@ -7,6 +7,7 @@ import json
 import time
 import sqlite3
 import requests
+from difflib import SequenceMatcher
 from flask import Flask, render_template, request, jsonify, g, Response
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from werkzeug.utils import secure_filename
@@ -23,6 +24,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE = os.path.join(BASE_DIR, 'chat.db')
 USER_FILE = os.path.join(BASE_DIR, 'user.txt')
 WEIGHTS_FILE = os.path.join(BASE_DIR, "nexara_weights.json")
+GREETINGS_FILE = os.path.join(BASE_DIR, "greetings.json")
 
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -109,7 +111,7 @@ except Exception as e:
     print(f"⚠️ قاعدة البيانات لم تعمل! لكن الخادم سيعمل بوضعية (الذاكرة المؤقتة).")
 
 # ======================================================================
-# دوال الذكاء الاصطناعي والرياضيات (النموذج الأصلي - معدل لتحمل الأخطاء)
+# دوال الذكاء الاصطناعي والرياضيات
 # ======================================================================
 
 
@@ -167,7 +169,7 @@ def load_weights():
     return None
 
 
-# 🔥 إصلاح تحميل الأوزان (إذا كان الملف قديماً، سيقوم تلقائياً بالتدريب من جديد)
+# تحميل أوزان النموذج
 weights = load_weights()
 if weights and all(k in weights for k in ['plus', 'minus', 'multiply', 'divide', 'weather', 'study']):
     w_p1, w_p2, b_p = weights['plus']
@@ -176,9 +178,9 @@ if weights and all(k in weights for k in ['plus', 'minus', 'multiply', 'divide',
     w_d, b_d = weights['divide']
     w_t, w_h, b_w = weights['weather']
     w_ex, w_hr, b_s = weights['study']
-    print("✅ تم تحميل أوزان Nexara بنجاح.")
+    print("✅ تم تحميل أوزان Nexara.")
 else:
-    print("🔮 ملف الأوزان قديم أو غير موجود. جاري تدريب نموذج Nexara من البداية...")
+    print("🔮 جاري تدريب نموذج Nexara من البداية...")
     X_p, Y_p = generate_math_data('+')
     w_p1, w_p2, b_p = train_brain(X_p, Y_p, epochs=1000)
     X_m, Y_m = generate_math_data('-')
@@ -200,6 +202,22 @@ else:
 @app.route('/')
 def home():
     return render_template('index.html')
+
+
+# ======================================================================
+# 🔥 تحميل الترحيبات (مع قيم افتراضية لمنع الانهيار)
+# ======================================================================
+greetings_list = ["Hello! How can I help you?", "Welcome!"]
+if os.path.exists(GREETINGS_FILE):
+    try:
+        with open(GREETINGS_FILE, 'r', encoding='utf-8') as f:
+            greetings_list = json.load(f)
+        print(f"✅ تم تحميل {len(greetings_list)} ترحيبة بنجاح!")
+    except Exception as e:
+        print(
+            f"⚠️ خطأ في تحميل الترحيبات: {e}. سيتم استخدام الترحيبات الافتراضية.")
+else:
+    print("⚠️ ملف greetings.json غير موجود. سيتم استخدام الترحيبات الافتراضية.")
 
 # ======================================================================
 # مسارات المحادثات والمجلدات
@@ -601,131 +619,223 @@ def predict():
             final_response = process_command(
                 user_input, conv_id, get_user_id(), db)
         else:
-            if mode == 'web':
-                try:
-                    search_success = False
-                    final_response = ""
+            # 🔥 منطق التشابه الضبابي (Fuzzy Matching) بعتبة 70%
+            words = user_input.lower().split()
+
+            # قائمة الكلمات الأساسية للتحية
+            core_greetings = ['مرحبا', 'أهلا', 'سلام', 'صباح', 'مساء',
+                              'hello', 'hi', 'hey', 'bonjour', 'salut', 'guten', 'hola']
+
+            is_greeting = False
+            detected_lang = None
+            matched_core = None
+
+            # فحص كل كلمة كتبها المستخدم
+            for word in words:
+                for core in core_greetings:
+                    # حساب درجة التشابه
+                    match_ratio = SequenceMatcher(None, word, core).ratio()
+                    if match_ratio >= 0.70:
+                        is_greeting = True
+                        matched_core = core
+                        break
+                if is_greeting:
+                    break
+
+            if is_greeting and matched_core:
+                # 🔥 تحديد اللغة بناءً على الكلمة الأساسية التي تطابقت
+                if matched_core in ['مرحبا', 'أهلا', 'سلام', 'صباح', 'مساء']:
+                    detected_lang = 'ar'
+                elif matched_core in ['hello', 'hi', 'hey']:
+                    detected_lang = 'en'
+                elif matched_core in ['bonjour', 'salut']:
+                    detected_lang = 'fr'
+                elif matched_core == 'guten':
+                    detected_lang = 'de'
+                elif matched_core == 'hola':
+                    detected_lang = 'es'
+                else:
+                    detected_lang = 'en'
+
+                # 🔥 اختيار الترحيبة بناءً على اللغة المكتشفة
+                if greetings_list:
+                    if detected_lang == 'ar':
+                        # تصفية الترحيبات العربية
+                        persian_chars = set(['چ', 'پ', 'ژ', 'گ', 'یک', 'ی'])
+
+                        filtered = []
+                        for g in greetings_list:
+                            # التحقق من وجود أحرف فارسية
+                            is_persian = False
+                            for char in persian_chars:
+                                if char in g:
+                                    is_persian = True
+                                    break
+
+                            # إذا كانت فارسية، تخطاها. إذا كانت عربية، أضفها.
+                            if not is_persian:
+                                if any(c in g for c in ['مرحب', 'أهلا', 'أهلاً', 'السلام', 'صباح', 'مساء']):
+                                    filtered.append(g)
+
+                    elif detected_lang == 'en':
+                        filtered = [g for g in greetings_list if any(
+                            c in g.lower() for c in ['hello', 'hi', 'hey', 'howdy', 'greetings', 'welcome'])]
+                    elif detected_lang == 'fr':
+                        filtered = [g for g in greetings_list if any(
+                            c in g.lower() for c in ['bonjour', 'salut', 'bienvenue'])]
+                    elif detected_lang == 'de':
+                        filtered = [g for g in greetings_list if any(
+                            c in g.lower() for c in ['hallo', 'guten'])]
+                        if not filtered:
+                            filtered = [g for g in greetings_list if any(
+                                c in g.lower() for c in ['hello', 'hi', 'hey', 'howdy', 'greetings', 'welcome'])]
+                    elif detected_lang == 'es':
+                        filtered = [g for g in greetings_list if any(
+                            c in g.lower() for c in ['hola', 'buenos'])]
+                        if not filtered:
+                            filtered = [g for g in greetings_list if any(
+                                c in g.lower() for c in ['hello', 'hi', 'hey', 'howdy', 'greetings', 'welcome'])]
+                    else:
+                        filtered = greetings_list
+
+                    if filtered:
+                        final_response = random.choice(filtered)
+                    else:
+                        final_response = random.choice(greetings_list)
+
+                else:
+                    final_response = "Hello! How can I assist you today?"
+
+            # إذا لم تكن تحية، يكمل المسار العادي
+            else:
+                if mode == 'web':
                     try:
-                        if GoogleTranslator:
-                            translator_query = GoogleTranslator(
-                                source='auto', target='en')
-                            translated_query = translator_query.translate(
-                                user_input)
-                        else:
-                            translated_query = user_input
-                    except:
-                        translated_query = user_input
-                    clean_eng_query = re.sub(
-                        r'[^\w\s]', '', translated_query).strip()
-                    if not clean_eng_query:
-                        clean_eng_query = user_input
-                    try:
-                        with ThreadPoolExecutor(max_workers=1) as executor:
-                            future = executor.submit(lambda: requests.get(
-                                f"https://api.duckduckgo.com/?q={clean_eng_query}&format=json&no_html=1&skip_disambig=1", timeout=2))
-                            response = future.result(timeout=1.5)
-                            if response.status_code == 200:
-                                data_ddg = response.json()
-                                abstract = data_ddg.get('AbstractText', '')
-                                if abstract and len(abstract) > 20:
-                                    clean_ddg = re.sub(
-                                        r'[*\[\]=#]', '', abstract)
-                                    try:
-                                        if GoogleTranslator:
-                                            translator_web = GoogleTranslator(
-                                                source='auto', target=ui_lang)
-                                            final_response = translator_web.translate(
-                                                clean_ddg)
-                                        else:
-                                            final_response = clean_ddg
-                                    except:
-                                        final_response = clean_ddg
-                                    search_success = True
-                    except (TimeoutError, Exception):
-                        pass
-                    if not search_success:
+                        search_success = False
+                        final_response = ""
                         try:
-                            headers = {
-                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-                            wiki_url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro&explaintext&titles={clean_eng_query}&format=json&redirects=1"
-                            response_wiki = requests.get(
-                                wiki_url, headers=headers, timeout=3)
-                            data_wiki = response_wiki.json()
-                            pages = data_wiki.get('query', {}).get('pages', {})
-                            for page_id, page_info in pages.items():
-                                if page_id != '-1' and 'extract' in page_info:
-                                    extract = page_info['extract']
-                                    if extract and len(extract) > 30:
-                                        clean_text = re.sub(
-                                            r'[*\[\]=#]', '', extract)
+                            if GoogleTranslator:
+                                translator_query = GoogleTranslator(
+                                    source='auto', target='en')
+                                translated_query = translator_query.translate(
+                                    user_input)
+                            else:
+                                translated_query = user_input
+                        except:
+                            translated_query = user_input
+                        clean_eng_query = re.sub(
+                            r'[^\w\s]', '', translated_query).strip()
+                        if not clean_eng_query:
+                            clean_eng_query = user_input
+                        try:
+                            with ThreadPoolExecutor(max_workers=1) as executor:
+                                future = executor.submit(lambda: requests.get(
+                                    f"https://api.duckduckgo.com/?q={clean_eng_query}&format=json&no_html=1&skip_disambig=1", timeout=2))
+                                response = future.result(timeout=1.5)
+                                if response.status_code == 200:
+                                    data_ddg = response.json()
+                                    abstract = data_ddg.get('AbstractText', '')
+                                    if abstract and len(abstract) > 20:
+                                        clean_ddg = re.sub(
+                                            r'[*\[\]=#]', '', abstract)
                                         try:
                                             if GoogleTranslator:
                                                 translator_web = GoogleTranslator(
                                                     source='auto', target=ui_lang)
                                                 final_response = translator_web.translate(
-                                                    clean_text)
+                                                    clean_ddg)
                                             else:
-                                                final_response = clean_text
+                                                final_response = clean_ddg
                                         except:
-                                            final_response = clean_text
+                                            final_response = clean_ddg
                                         search_success = True
-                                        break
-                        except Exception:
+                        except (TimeoutError, Exception):
                             pass
-                    if not search_success:
-                        final_response = "No results found. Make sure the server is connected to the internet or try later."
-                except Exception as e:
-                    final_response = f"An error occurred during search: {str(e)}"
-            elif mode == 'code':
-                final_response = "Code generated."
-            else:
-                math_match = re.search(
-                    r'(\d+)\s*([\+\-\*/])\s*(\d+)', user_input)
-                if math_match:
-                    n1, op, n2 = float(math_match.group(1)), math_match.group(
-                        2), float(math_match.group(3))
-                    if op == '/':
-                        if n2 == 0:
-                            final_response = '❌ Cannot divide by zero!'
-                        else:
-                            scale_m = n1 * n2
+                        if not search_success:
+                            try:
+                                headers = {
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                                wiki_url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro&explaintext&titles={clean_eng_query}&format=json&redirects=1"
+                                response_wiki = requests.get(
+                                    wiki_url, headers=headers, timeout=3)
+                                data_wiki = response_wiki.json()
+                                pages = data_wiki.get(
+                                    'query', {}).get('pages', {})
+                                for page_id, page_info in pages.items():
+                                    if page_id != '-1' and 'extract' in page_info:
+                                        extract = page_info['extract']
+                                        if extract and len(extract) > 30:
+                                            clean_text = re.sub(
+                                                r'[*\[\]=#]', '', extract)
+                                            try:
+                                                if GoogleTranslator:
+                                                    translator_web = GoogleTranslator(
+                                                        source='auto', target=ui_lang)
+                                                    final_response = translator_web.translate(
+                                                        clean_text)
+                                                else:
+                                                    final_response = clean_text
+                                            except:
+                                                final_response = clean_text
+                                            search_success = True
+                                            break
+                            except Exception:
+                                pass
+                        if not search_success:
+                            final_response = "No results found. Make sure the server is connected to the internet or try later."
+                    except Exception as e:
+                        final_response = f"An error occurred during search: {str(e)}"
+                elif mode == 'code':
+                    final_response = "Code generated."
+                else:
+                    math_match = re.search(
+                        r'(\d+)\s*([\+\-\*/])\s*(\d+)', user_input)
+                    if math_match:
+                        n1, op, n2 = float(math_match.group(1)), math_match.group(
+                            2), float(math_match.group(3))
+                        if op == '/':
+                            if n2 == 0:
+                                final_response = '❌ Cannot divide by zero!'
+                            else:
+                                scale_m = n1 * n2
+                                n1_s, n2_s = n1 / \
+                                    math.sqrt(scale_m), n2 / math.sqrt(scale_m)
+                                ans = ((n1_s * n2_s) * w_d + b_d) * (n1 / n2)
+                                final_output = int(round(ans)) if round(
+                                    ans, 4).is_integer() else round(ans, 4)
+                                final_response = f"Math result: {final_output}"
+                        elif op == '*':
+                            scale = n1 * n2
                             n1_s, n2_s = n1 / \
-                                math.sqrt(scale_m), n2 / math.sqrt(scale_m)
-                            ans = ((n1_s * n2_s) * w_d + b_d) * (n1 / n2)
+                                math.sqrt(scale), n2 / math.sqrt(scale)
+                            ans = ((n1_s * n2_s) * w_mu + b_mu) * scale
                             final_output = int(round(ans)) if round(
                                 ans, 4).is_integer() else round(ans, 4)
                             final_response = f"Math result: {final_output}"
-                    elif op == '*':
-                        scale = n1 * n2
-                        n1_s, n2_s = n1 / \
-                            math.sqrt(scale), n2 / math.sqrt(scale)
-                        ans = ((n1_s * n2_s) * w_mu + b_mu) * scale
-                        final_output = int(round(ans)) if round(
-                            ans, 4).is_integer() else round(ans, 4)
-                        final_response = f"Math result: {final_output}"
-                    else:
-                        scale = (n1 + n2 if (n1 + n2) != 0 else 1)
-                        n1_s, n2_s = n1 / scale, n2 / scale
-                        if op == '+':
-                            ans = ((n1_s * w_p1) + (n2_s * w_p2) + b_p) * scale
-                        elif op == '-':
-                            ans = ((n1_s * w_m1) + (n2_s * w_m2) + b_m) * scale
-                        final_output = int(round(ans)) if round(
-                            ans, 4).is_integer() else round(ans, 4)
-                        final_response = f"Math result: {final_output}"
-                else:
-                    nums = [float(x)
-                            for x in re.findall(r'\d+\.?\d*', user_input)]
-                    if len(nums) >= 2 and any(x in user_input for x in ['طقس', 'جو', 'دراسة', 'مذاكرة', 'لعب']):
-                        if any(x in user_input for x in ['طقس', 'جو']):
-                            score = nums[0]*w_t + nums[1]*w_h + b_w
-                            decision = "🏞️ Suitable for going out!" if score > 0 else "🏠 Stay at home."
                         else:
-                            score = nums[0]*w_ex + nums[1]*w_hr + b_s
-                            decision = "🎮 You can play!" if score > 0 else "📚 Open your books immediately."
-                        final_response = f"Decision: {decision}"
+                            scale = (n1 + n2 if (n1 + n2) != 0 else 1)
+                            n1_s, n2_s = n1 / scale, n2 / scale
+                            if op == '+':
+                                ans = ((n1_s * w_p1) +
+                                       (n2_s * w_p2) + b_p) * scale
+                            elif op == '-':
+                                ans = ((n1_s * w_m1) +
+                                       (n2_s * w_m2) + b_m) * scale
+                            final_output = int(round(ans)) if round(
+                                ans, 4).is_integer() else round(ans, 4)
+                            final_response = f"Math result: {final_output}"
                     else:
-                        final_response = user_input
+                        nums = [float(x) for x in re.findall(
+                            r'\d+\.?\d*', user_input)]
+                        if len(nums) >= 2 and any(x in user_input for x in ['طقس', 'جو', 'دراسة', 'مذاكرة', 'لعب']):
+                            if any(x in user_input for x in ['طقس', 'جو']):
+                                score = nums[0]*w_t + nums[1]*w_h + b_w
+                                decision = "🏞️ Suitable for going out!" if score > 0 else "🏠 Stay at home."
+                            else:
+                                score = nums[0]*w_ex + nums[1]*w_hr + b_s
+                                decision = "🎮 You can play!" if score > 0 else "📚 Open your books immediately."
+                            final_response = f"Decision: {decision}"
+                        else:
+                            final_response = user_input
 
         if is_memory_mode:
             temp_sessions[conv_id]['messages'].append(
