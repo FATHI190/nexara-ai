@@ -169,7 +169,6 @@ def load_weights():
     return None
 
 
-# تحميل أوزان النموذج
 weights = load_weights()
 if weights and all(k in weights for k in ['plus', 'minus', 'multiply', 'divide', 'weather', 'study']):
     w_p1, w_p2, b_p = weights['plus']
@@ -198,14 +197,8 @@ else:
     save_weights(weights)
     print("✅ تم تدريب الأوزان وحفظها بنجاح!")
 
-
-@app.route('/')
-def home():
-    return render_template('index.html')
-
-
 # ======================================================================
-# 🔥 تحميل الترحيبات (مع قيم افتراضية لمنع الانهيار)
+# 🔥 تحميل الترحيبات
 # ======================================================================
 greetings_list = ["Hello! How can I help you?", "Welcome!"]
 if os.path.exists(GREETINGS_FILE):
@@ -220,8 +213,62 @@ else:
     print("⚠️ ملف greetings.json غير موجود. سيتم استخدام الترحيبات الافتراضية.")
 
 # ======================================================================
+# 🔥 دوال المساعدة للتشابه الضبابي
+# ======================================================================
+
+
+def get_best_fuzzy_match(input_word, options, threshold=0.70):
+    """تجد أفضل تطابق ضبابي بين كلمة وقائمة من الخيارات"""
+    input_word = input_word.lower()
+    best_match = None
+    best_ratio = 0.0
+
+    for option in options:
+        ratio = SequenceMatcher(None, input_word, option.lower()).ratio()
+        if ratio >= threshold and ratio > best_ratio:
+            best_ratio = ratio
+            best_match = option
+
+    return best_match
+
+
+def find_intent_in_text(text, intent_map, threshold=0.70):
+    """تبحث عن نية (Intent) داخل النص باستخدام التشابه الضبابي"""
+    words = text.lower().split()
+    for word in words:
+        for intent, keywords in intent_map.items():
+            match = get_best_fuzzy_match(word, keywords, threshold)
+            if match:
+                return intent, match
+    return None, None
+
+
+def find_command(text, command_map, threshold=0.75):
+    """تبحث عن أمر داخل النص إذا بدأ بـ /"""
+    if not text.startswith('/'):
+        return None, None
+
+    parts = text.split(' ', 1)
+    cmd_input = parts[0][1:].lower()
+
+    for command, aliases in command_map.items():
+        if cmd_input in aliases:
+            return command, cmd_input
+        for alias in aliases:
+            ratio = SequenceMatcher(None, cmd_input, alias).ratio()
+            if ratio >= threshold:
+                return command, cmd_input
+
+    return None, None
+
+# ======================================================================
 # مسارات المحادثات والمجلدات
 # ======================================================================
+
+
+@app.route('/')
+def home():
+    return render_template('index.html')
 
 
 @app.route('/api/folders', methods=['GET'])
@@ -513,64 +560,86 @@ def clear_all_chats():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
 # ======================================================================
-# 🔥 معالج الأوامر
+# 🔥 معالج الأوامر والتنبؤ الذكي (Fuzzy Logic)
 # ======================================================================
+COMMAND_MAP = {
+    'rename': ['rename', 'remane', 'rname', 'renmae', 'enme'],
+    'delete': ['delete', 'dalete', 'delet', 'delt'],
+    'export': ['export', 'eksport', 'exprot', 'xport'],
+    'folder': ['folder', 'foldr', 'flder'],
+    'move': ['move', 'mve', 'mov'],
+    'help': ['help', 'halp', 'hlp']
+}
+
+INTENT_MAP = {
+    'weather': ['طقس', 'جو', 'حرارة', 'درجة حرارة', 'مطر'],
+    'study': ['دراسة', 'مذاكرة', 'لعب', 'وقت الفراغ'],
+    'math': ['جمع', 'طرح', 'ضرب', 'قسمة', 'حساب', 'معادلة']
+}
 
 
-def process_command(user_input, conv_id, user_id, db):
-    clean_input = user_input.strip().rstrip('/')
-    parts = clean_input.split(' ', 1)
-    cmd = parts[0].lower()
-    if cmd == '/help':
+def process_command_fuzzy(user_input, conv_id, user_id, db):
+    command, matched = find_command(user_input, COMMAND_MAP)
+    if not command:
+        return f"⚠️ أمر غير معروف: `{user_input.split()[0]}`. اكتب `/help` لمعرفة الأوامر المتاحة."
+
+    parts = user_input.split(' ', 1)
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    if command == 'help':
         return "📖 **Nexara Command List:**\n\n`/help` - Show this help message.\n`/rename [new name]` - Rename current conversation.\n`/delete` - Delete current conversation.\n`/export` - Export current conversation as a text file.\n`/folder [folder name]` - Create a new folder.\n`/move [folder name]` - Move current conversation to a folder.\n\n*Tip: Do not put a slash (/) at the end.*"
-    if cmd == '/rename' and len(parts) > 1:
-        new_title = parts[1].strip()
-        if not new_title:
+
+    if command == 'rename':
+        if not rest:
             return "❌ Error: Please provide a new name. Example: `/rename My Project`"
         db.execute("UPDATE conversations SET title = ? WHERE id = ?",
-                   (new_title, conv_id))
+                   (rest, conv_id))
         db.commit()
-        return f"✅ Conversation renamed to: **{new_title}**"
-    if cmd == '/delete':
+        return f"✅ Conversation renamed to: **{rest}**"
+
+    if command == 'delete':
         db.execute("DELETE FROM messages WHERE conversation_id = ?", (conv_id,))
         db.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
         db.commit()
         return "🗑️ ✅ Conversation deleted successfully."
-    if cmd == '/export':
+
+    if command == 'export':
         return f"📂 **Export Link:** [Click here to download text file](/api/export/{conv_id})"
-    if cmd == '/folder' and len(parts) > 1:
-        folder_name = parts[1].strip()
-        if not folder_name:
+
+    if command == 'folder':
+        if not rest:
             return "❌ Error: Please provide a folder name. Example: `/folder Projects`"
         cur = db.execute(
-            "SELECT id FROM folders WHERE user_id = ? AND name = ?", (user_id, folder_name))
+            "SELECT id FROM folders WHERE user_id = ? AND name = ?", (user_id, rest))
         existing = cur.fetchone()
         if existing:
-            return f"⚠️ Folder `{folder_name}` already exists."
+            return f"⚠️ Folder `{rest}` already exists."
         cur = db.execute(
-            "INSERT INTO folders (user_id, name) VALUES (?, ?)", (user_id, folder_name))
+            "INSERT INTO folders (user_id, name) VALUES (?, ?)", (user_id, rest))
         db.commit()
-        return f"📁 ✅ New folder created: **{folder_name}**"
-    if cmd == '/move' and len(parts) > 1:
-        folder_name = parts[1].strip()
-        if not folder_name:
+        return f"📁 ✅ New folder created: **{rest}**"
+
+    if command == 'move':
+        if not rest:
             return "❌ Error: Please provide a folder name. Example: `/move Projects`"
         cur = db.execute(
-            "SELECT id FROM folders WHERE user_id = ? AND name = ?", (user_id, folder_name))
+            "SELECT id FROM folders WHERE user_id = ? AND name = ?", (user_id, rest))
         existing = cur.fetchone()
         if existing:
             folder_id = existing['id']
         else:
             cur = db.execute(
-                "INSERT INTO folders (user_id, name) VALUES (?, ?)", (user_id, folder_name))
+                "INSERT INTO folders (user_id, name) VALUES (?, ?)", (user_id, rest))
             folder_id = cur.lastrowid
             db.commit()
         db.execute(
             "UPDATE conversations SET folder_id = ? WHERE id = ?", (folder_id, conv_id))
         db.commit()
-        return f"📦 ✅ Conversation moved to folder: **{folder_name}**"
-    return f"⚠️ Unknown command: `{cmd}`. Type `/help` for available commands."
+        return f"📦 ✅ Conversation moved to folder: **{rest}**"
+
+    return f"⚠️ Unknown command: `{command}`. Type `/help` for available commands."
 
 
 @app.route('/predict', methods=['POST'])
@@ -615,68 +684,57 @@ def predict():
                 db.commit()
 
         final_response = ""
-        if user_input.startswith('/'):
-            final_response = process_command(
-                user_input, conv_id, get_user_id(), db)
-        else:
-            # 🔥 منطق التشابه الضبابي (Fuzzy Matching) بعتبة 70%
-            words = user_input.lower().split()
 
-            # قائمة الكلمات الأساسية للتحية
+        # ======================================================================
+        # 🔥 1. التحقق من الأوامر (مع منطق التطابق الضبابي)
+        # ======================================================================
+        if user_input.startswith('/'):
+            final_response = process_command_fuzzy(
+                user_input, conv_id, get_user_id(), db)
+
+        # ======================================================================
+        # 🔥 2. التحقق من النوايا (Intent Recognition باستخدام Fuzzy Matching)
+        # ======================================================================
+        else:
+            # 2.1. التحقق من الترحيبات أولاً
+            words = user_input.lower().split()
             core_greetings = ['مرحبا', 'أهلا', 'سلام', 'صباح', 'مساء',
                               'hello', 'hi', 'hey', 'bonjour', 'salut', 'guten', 'hola']
-
             is_greeting = False
             detected_lang = None
-            matched_core = None
 
-            # فحص كل كلمة كتبها المستخدم
             for word in words:
                 for core in core_greetings:
-                    # حساب درجة التشابه
-                    match_ratio = SequenceMatcher(None, word, core).ratio()
-                    if match_ratio >= 0.70:
+                    if SequenceMatcher(None, word, core).ratio() >= 0.70:
                         is_greeting = True
-                        matched_core = core
+                        if core in ['مرحبا', 'أهلا', 'سلام', 'صباح', 'مساء']:
+                            detected_lang = 'ar'
+                        elif core in ['hello', 'hi', 'hey']:
+                            detected_lang = 'en'
+                        elif core in ['bonjour', 'salut']:
+                            detected_lang = 'fr'
+                        elif core == 'guten':
+                            detected_lang = 'de'
+                        elif core == 'hola':
+                            detected_lang = 'es'
                         break
                 if is_greeting:
                     break
 
-            if is_greeting and matched_core:
-                # 🔥 تحديد اللغة بناءً على الكلمة الأساسية التي تطابقت
-                if matched_core in ['مرحبا', 'أهلا', 'سلام', 'صباح', 'مساء']:
-                    detected_lang = 'ar'
-                elif matched_core in ['hello', 'hi', 'hey']:
-                    detected_lang = 'en'
-                elif matched_core in ['bonjour', 'salut']:
-                    detected_lang = 'fr'
-                elif matched_core == 'guten':
-                    detected_lang = 'de'
-                elif matched_core == 'hola':
-                    detected_lang = 'es'
-                else:
-                    detected_lang = 'en'
-
-                # 🔥 اختيار الترحيبة بناءً على اللغة المكتشفة
+            if is_greeting:
                 if greetings_list:
                     if detected_lang == 'ar':
-                        # تصفية الترحيبات العربية
                         persian_chars = set(['چ', 'پ', 'ژ', 'گ', 'یک', 'ی'])
-
                         filtered = []
                         for g in greetings_list:
-                            # التحقق من وجود أحرف فارسية
                             is_persian = False
                             for char in persian_chars:
                                 if char in g:
                                     is_persian = True
                                     break
-
-                            # إذا كانت فارسية، تخطاها. إذا كانت عربية، أضفها.
                             if not is_persian:
                                 if any(c in g for c in ['مرحب', 'أهلا', 'أهلاً', 'السلام', 'صباح', 'مساء']):
                                     filtered.append(g)
-
                     elif detected_lang == 'en':
                         filtered = [g for g in greetings_list if any(
                             c in g.lower() for c in ['hello', 'hi', 'hey', 'howdy', 'greetings', 'welcome'])]
@@ -684,109 +742,50 @@ def predict():
                         filtered = [g for g in greetings_list if any(
                             c in g.lower() for c in ['bonjour', 'salut', 'bienvenue'])]
                     elif detected_lang == 'de':
-                        filtered = [g for g in greetings_list if any(
-                            c in g.lower() for c in ['hallo', 'guten'])]
-                        if not filtered:
-                            filtered = [g for g in greetings_list if any(
-                                c in g.lower() for c in ['hello', 'hi', 'hey', 'howdy', 'greetings', 'welcome'])]
+                        filtered = [g for g in greetings_list if any(c in g.lower() for c in ['hallo', 'guten'])] or [
+                            g for g in greetings_list if any(c in g.lower() for c in ['hello', 'hi', 'hey'])]
                     elif detected_lang == 'es':
-                        filtered = [g for g in greetings_list if any(
-                            c in g.lower() for c in ['hola', 'buenos'])]
-                        if not filtered:
-                            filtered = [g for g in greetings_list if any(
-                                c in g.lower() for c in ['hello', 'hi', 'hey', 'howdy', 'greetings', 'welcome'])]
+                        filtered = [g for g in greetings_list if any(c in g.lower() for c in ['hola', 'buenos'])] or [
+                            g for g in greetings_list if any(c in g.lower() for c in ['hello', 'hi', 'hey'])]
                     else:
                         filtered = greetings_list
-
-                    if filtered:
-                        final_response = random.choice(filtered)
-                    else:
-                        final_response = random.choice(greetings_list)
-
+                    final_response = random.choice(
+                        filtered) if filtered else random.choice(greetings_list)
                 else:
                     final_response = "Hello! How can I assist you today?"
 
-            # إذا لم تكن تحية، يكمل المسار العادي
+            # ======================================================================
+            # 🔥 3. التحقق من النوايا الأخرى (طقس، دراسة، رياضيات) باستخدام Fuzzy Logic
+            # ======================================================================
             else:
-                if mode == 'web':
-                    try:
-                        search_success = False
-                        final_response = ""
-                        try:
-                            if GoogleTranslator:
-                                translator_query = GoogleTranslator(
-                                    source='auto', target='en')
-                                translated_query = translator_query.translate(
-                                    user_input)
-                            else:
-                                translated_query = user_input
-                        except:
-                            translated_query = user_input
-                        clean_eng_query = re.sub(
-                            r'[^\w\s]', '', translated_query).strip()
-                        if not clean_eng_query:
-                            clean_eng_query = user_input
-                        try:
-                            with ThreadPoolExecutor(max_workers=1) as executor:
-                                future = executor.submit(lambda: requests.get(
-                                    f"https://api.duckduckgo.com/?q={clean_eng_query}&format=json&no_html=1&skip_disambig=1", timeout=2))
-                                response = future.result(timeout=1.5)
-                                if response.status_code == 200:
-                                    data_ddg = response.json()
-                                    abstract = data_ddg.get('AbstractText', '')
-                                    if abstract and len(abstract) > 20:
-                                        clean_ddg = re.sub(
-                                            r'[*\[\]=#]', '', abstract)
-                                        try:
-                                            if GoogleTranslator:
-                                                translator_web = GoogleTranslator(
-                                                    source='auto', target=ui_lang)
-                                                final_response = translator_web.translate(
-                                                    clean_ddg)
-                                            else:
-                                                final_response = clean_ddg
-                                        except:
-                                            final_response = clean_ddg
-                                        search_success = True
-                        except (TimeoutError, Exception):
-                            pass
-                        if not search_success:
-                            try:
-                                headers = {
-                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-                                wiki_url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro&explaintext&titles={clean_eng_query}&format=json&redirects=1"
-                                response_wiki = requests.get(
-                                    wiki_url, headers=headers, timeout=3)
-                                data_wiki = response_wiki.json()
-                                pages = data_wiki.get(
-                                    'query', {}).get('pages', {})
-                                for page_id, page_info in pages.items():
-                                    if page_id != '-1' and 'extract' in page_info:
-                                        extract = page_info['extract']
-                                        if extract and len(extract) > 30:
-                                            clean_text = re.sub(
-                                                r'[*\[\]=#]', '', extract)
-                                            try:
-                                                if GoogleTranslator:
-                                                    translator_web = GoogleTranslator(
-                                                        source='auto', target=ui_lang)
-                                                    final_response = translator_web.translate(
-                                                        clean_text)
-                                                else:
-                                                    final_response = clean_text
-                                            except:
-                                                final_response = clean_text
-                                            search_success = True
-                                            break
-                            except Exception:
-                                pass
-                        if not search_success:
-                            final_response = "No results found. Make sure the server is connected to the internet or try later."
-                    except Exception as e:
-                        final_response = f"An error occurred during search: {str(e)}"
-                elif mode == 'code':
-                    final_response = "Code generated."
-                else:
+                intent, matched_keyword = find_intent_in_text(
+                    user_input, INTENT_MAP)
+
+                # إذا تم اكتشاف نية الطقس
+                if intent == 'weather':
+                    nums = [float(x)
+                            for x in re.findall(r'\d+\.?\d*', user_input)]
+                    if len(nums) >= 2:
+                        score = nums[0]*w_t + nums[1]*w_h + b_w
+                        decision = "🏞️ Suitable for going out!" if score > 0 else "🏠 Stay at home."
+                        final_response = f"Decision: {decision}"
+                    else:
+                        # إذا كان سؤال طقس بدون أرقام، قم بتوجيهه للبحث في الويب
+                        mode = 'web'
+
+                # إذا تم اكتشاف نية دراسة
+                elif intent == 'study':
+                    nums = [float(x)
+                            for x in re.findall(r'\d+\.?\d*', user_input)]
+                    if len(nums) >= 2:
+                        score = nums[0]*w_ex + nums[1]*w_hr + b_s
+                        decision = "🎮 You can play!" if score > 0 else "📚 Open your books immediately."
+                        final_response = f"Decision: {decision}"
+                    else:
+                        final_response = user_input
+
+                # إذا تم اكتشاف نية رياضيات
+                elif intent == 'math':
                     math_match = re.search(
                         r'(\d+)\s*([\+\-\*/])\s*(\d+)', user_input)
                     if math_match:
@@ -824,18 +823,93 @@ def predict():
                                 ans, 4).is_integer() else round(ans, 4)
                             final_response = f"Math result: {final_output}"
                     else:
-                        nums = [float(x) for x in re.findall(
-                            r'\d+\.?\d*', user_input)]
-                        if len(nums) >= 2 and any(x in user_input for x in ['طقس', 'جو', 'دراسة', 'مذاكرة', 'لعب']):
-                            if any(x in user_input for x in ['طقس', 'جو']):
-                                score = nums[0]*w_t + nums[1]*w_h + b_w
-                                decision = "🏞️ Suitable for going out!" if score > 0 else "🏠 Stay at home."
-                            else:
-                                score = nums[0]*w_ex + nums[1]*w_hr + b_s
-                                decision = "🎮 You can play!" if score > 0 else "📚 Open your books immediately."
-                            final_response = f"Decision: {decision}"
-                        else:
-                            final_response = user_input
+                        final_response = user_input
+
+                # ======================================================================
+                # 🔥 4. المسار العادي (Web Search أو انعكاس النص)
+                # ======================================================================
+                if not final_response:
+                    if mode == 'web' or intent == 'weather':
+                        try:
+                            search_success = False
+                            final_response = ""
+                            try:
+                                if GoogleTranslator:
+                                    translator_query = GoogleTranslator(
+                                        source='auto', target='en')
+                                    translated_query = translator_query.translate(
+                                        user_input)
+                                else:
+                                    translated_query = user_input
+                            except:
+                                translated_query = user_input
+                            clean_eng_query = re.sub(
+                                r'[^\w\s]', '', translated_query).strip()
+                            if not clean_eng_query:
+                                clean_eng_query = user_input
+                            try:
+                                with ThreadPoolExecutor(max_workers=1) as executor:
+                                    future = executor.submit(lambda: requests.get(
+                                        f"https://api.duckduckgo.com/?q={clean_eng_query}&format=json&no_html=1&skip_disambig=1", timeout=2))
+                                    response = future.result(timeout=1.5)
+                                    if response.status_code == 200:
+                                        data_ddg = response.json()
+                                        abstract = data_ddg.get(
+                                            'AbstractText', '')
+                                        if abstract and len(abstract) > 20:
+                                            clean_ddg = re.sub(
+                                                r'[*\[\]=#]', '', abstract)
+                                            try:
+                                                if GoogleTranslator:
+                                                    translator_web = GoogleTranslator(
+                                                        source='auto', target=ui_lang)
+                                                    final_response = translator_web.translate(
+                                                        clean_ddg)
+                                                else:
+                                                    final_response = clean_ddg
+                                            except:
+                                                final_response = clean_ddg
+                                            search_success = True
+                            except (TimeoutError, Exception):
+                                pass
+                            if not search_success:
+                                try:
+                                    headers = {
+                                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                                    wiki_url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro&explaintext&titles={clean_eng_query}&format=json&redirects=1"
+                                    response_wiki = requests.get(
+                                        wiki_url, headers=headers, timeout=3)
+                                    data_wiki = response_wiki.json()
+                                    pages = data_wiki.get(
+                                        'query', {}).get('pages', {})
+                                    for page_id, page_info in pages.items():
+                                        if page_id != '-1' and 'extract' in page_info:
+                                            extract = page_info['extract']
+                                            if extract and len(extract) > 30:
+                                                clean_text = re.sub(
+                                                    r'[*\[\]=#]', '', extract)
+                                                try:
+                                                    if GoogleTranslator:
+                                                        translator_web = GoogleTranslator(
+                                                            source='auto', target=ui_lang)
+                                                        final_response = translator_web.translate(
+                                                            clean_text)
+                                                    else:
+                                                        final_response = clean_text
+                                                except:
+                                                    final_response = clean_text
+                                                search_success = True
+                                                break
+                                except Exception:
+                                    pass
+                            if not search_success:
+                                final_response = "No results found. Make sure the server is connected to the internet or try later."
+                        except Exception as e:
+                            final_response = f"An error occurred during search: {str(e)}"
+                    elif mode == 'code':
+                        final_response = "Code generated."
+                    else:
+                        final_response = user_input
 
         if is_memory_mode:
             temp_sessions[conv_id]['messages'].append(
